@@ -11,8 +11,8 @@ from alembic import context
 from src.core.database import Base
 from src.core.settings import settings
 
-# App Models
-from src.app import models
+# Register App Models
+from src.app import registry
 
 config = context.config
 fileConfig(config.config_file_name)

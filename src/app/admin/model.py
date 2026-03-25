@@ -1,4 +1,3 @@
-# app/routers/admin/models.py
 import enum
 from sqlalchemy import Column, Integer, String, Enum, JSON
 from src.core.database import Base

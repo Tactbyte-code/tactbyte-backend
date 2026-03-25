@@ -1,1 +1,0 @@
-from src.app.admin.model import Admin

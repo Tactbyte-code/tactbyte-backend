@@ -1,6 +1,5 @@
 from sqlalchemy import Column, Integer, String, Boolean
 from src.core.database import Base
-from sqlalchemy.orm import relationship
 
 class User(Base):
     __tablename__ = "users"
@@ -12,5 +11,3 @@ class User(Base):
     photo_url = Column(String, nullable=True)
     hashed_password = Column(String, nullable=True)
     is_onboarded = Column(Boolean, default=False)
-    
-    reddit_queries = relationship("RedditQuery", back_populates="user")

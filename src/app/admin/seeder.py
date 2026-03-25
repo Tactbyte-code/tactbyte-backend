@@ -1,6 +1,3 @@
-# src/app/admin/seeder.py
-
-import asyncio
 from sqlalchemy import select
 from src.core.database import AsyncSessionLocal
 from src.core.settings import settings
