@@ -1,0 +1,9 @@
+create a new migration using
+```
+alembic revision --autogenerate -m "<migration message>"
+```
+
+apply latest migration using
+```
+alembic upgrade head
+```
