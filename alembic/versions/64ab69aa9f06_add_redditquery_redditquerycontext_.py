@@ -85,7 +85,7 @@ def upgrade() -> None:
     sa.Column('topic_boundary', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('schema_hints', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('provider', sa.String(length=32), nullable=True),
-    sa.Column('modelel', sa.String(length=128), nullable=True),
+    sa.Column('model', sa.String(length=128), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['query_id'], ['reddit_queries.id'], ),
     sa.PrimaryKeyConstraint('id')

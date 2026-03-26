@@ -130,7 +130,7 @@ class RedditQueryContext(Base):
     topic_boundary  = Column(JSONB,       nullable=True)
     schema_hints    = Column(JSONB,       nullable=True)
     provider        = Column(String(32),  nullable=True)
-    modelel         = Column(String(128), nullable=True)
+    model           = Column(String(128), nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
