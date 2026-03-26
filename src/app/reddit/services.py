@@ -204,11 +204,10 @@ async def trigger_summarize(query_id: UUID, db: AsyncSession, current_user: User
     return {"id": str(record.id), "status": record.status, "runpod_job_id": job_id}
 
 
-async def get_result(query_id: UUID, db: AsyncSession, current_user: User) -> RedditSummary:
+async def get_result(query_id: UUID, db: AsyncSession) -> RedditSummary:
     result = await db.execute(
         select(RedditSummary).where(
             RedditSummary.query_id == query_id,
-            RedditSummary.user_id  == current_user.id,
         )
     )
     record = result.scalar_one_or_none()
