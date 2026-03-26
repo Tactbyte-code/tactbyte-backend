@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional
+from datetime import datetime
 
 class GoogleSignUp(BaseModel):
     firebase_uid: str
@@ -15,3 +16,25 @@ class EmailSignUp(BaseModel):
     
 class CheckProviderRequest(BaseModel):
     str: EmailStr
+
+class UserResponse(BaseModel):
+    id: int
+    full_name: str
+    email: str
+    photo_url: str | None
+    created_at: datetime
+    
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class VerifyOTPRequest(BaseModel):
+    email: str
+    otp: str
+
+class ResetPasswordRequest(BaseModel):
+    reset_token: str
+    new_password: str
+
+class MessageResponse(BaseModel):
+    message: str

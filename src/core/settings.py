@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     LLM_API_BASE_URL: str
     LLM_API_KEY: str
     LLM_MAX_TOKENS: int = 8192
+    
+    # SARVAM
+    SARVAM_API_KEY: str
 
     # Google Vertex AI
     DISCOVERY_PROJECT_ID: str
