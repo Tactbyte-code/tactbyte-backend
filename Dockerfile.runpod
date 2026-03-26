@@ -1,0 +1,19 @@
+FROM python:3.11.1-slim
+
+# Working directory
+WORKDIR /app
+
+# Environment
+ENV PYTHONUNBUFFERED=1
+
+# Copy requirements first (for caching)
+COPY requirements.txt ./requirements.txt
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code
+COPY src ./src
+
+# Run worker
+CMD ["python", "-u", "src/infra/runpod/reddit/handler.py"]
