@@ -5,6 +5,7 @@ from src.app.onboarding.router import router as onboarding_router
 from src.app.reddit.router import router as reddit_router
 from src.app.reddit.admin_router import router as admin_reddit_router
 from src.app.plan.router import router as user_plan_router
+from src.app.playstore.router import router as playstore_router
 
 router = APIRouter(prefix="/v1")
 
@@ -17,3 +18,4 @@ router.include_router(user_router)
 router.include_router(onboarding_router)
 router.include_router(reddit_router)
 router.include_router(user_plan_router)
+router.include_router(playstore_router)

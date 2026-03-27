@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import runpod
 from src.core.settings import settings
-from src.infra.runpod.reddit.services import reddit, playstore
+from src.infra.runpod.reddit.services import reddit
+from src.infra.runpod.playstore.services import playstore
 import src.app.registry 
 
 # ─── Router ───────────────────────────────────────────────────────────────────

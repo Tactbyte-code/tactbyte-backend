@@ -16,4 +16,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src ./src
 
 # Run worker
-CMD ["python", "-m", "src.infra.runpod.reddit.handler"]
+CMD ["python", "-m", "src.infra.runpod.handler"]
