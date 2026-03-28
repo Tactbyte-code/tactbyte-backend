@@ -127,7 +127,7 @@ async def _handle_reddit_search(query_id: str) -> dict:
     log.info(f"[GATE 1] Complete — {len(vertex_results)} unique results")
     try:
         async with AsyncSessionLocal() as session:
-            for r in vertex_results:
+            for i, r in enumerate(vertex_results):
                 post = RedditPost(
                     query_id=     query_id,
                     search_query= r.get("query", ""),
@@ -135,6 +135,7 @@ async def _handle_reddit_search(query_id: str) -> dict:
                     url=          r.get("url", ""),
                     snippet=      r.get("snippet"),
                     doc_id=       r.get("doc_id"),
+                    user_approved= i < 10,
                 )
                 session.add(post)
             await session.commit()
