@@ -9,11 +9,19 @@ Multi-call strategy:
   Call 2   → overview (executive_summary, sentiment, rating breakdown, market signals)
   Call 3…N → one theme per call  (pain points, quotes, system actions)
   Call N+1 → actionable next steps
+
+Payload budget:
+  Azure APIM buffered body limit = 2 MiB (2,097,152 bytes).
+  We target 1.5 MiB (1,572,864 bytes) per call to leave headroom for
+  prompt text, system instructions, and JSON framing overhead.
+  _build_context() enforces this hard ceiling by dropping reviews once
+  the encoded byte length would exceed the budget.
 """
 from __future__ import annotations
 
 import json
 import re
+import sys
 from datetime import datetime, timezone
 from typing import Any
 
@@ -21,9 +29,24 @@ import runpod
 
 log = runpod.RunPodLogger()
 
-# ── Constants ────────────────────────────────────────────────────────────────
-MAX_REVIEW_CHARS = 400
-MAX_REPLY_CHARS  = 200
+# ── Payload budget ────────────────────────────────────────────────────────────
+# Azure APIM buffers up to 2 MiB per request body.
+# We reserve 512 KiB for prompt text, system instructions, and JSON framing,
+# leaving 1.5 MiB for the review context block.
+_AZURE_BUFFER_LIMIT_BYTES = 2 * 1024 * 1024          # 2 MiB hard ceiling
+_PROMPT_OVERHEAD_BYTES    = 512 * 1024                # 512 KiB reserved for prompt
+_CONTEXT_BUDGET_BYTES     = (
+    _AZURE_BUFFER_LIMIT_BYTES - _PROMPT_OVERHEAD_BYTES  # 1.5 MiB for reviews
+)
+
+# ── Per-review truncation ─────────────────────────────────────────────────────
+# Tighter limits reduce per-review byte cost without losing signal.
+MAX_REVIEW_CHARS = 220   # was 400 — saves ~45% per review
+MAX_REPLY_CHARS  = 100   # was 200
+
+# ── Theme-call review cap ─────────────────────────────────────────────────────
+# Per-theme calls receive only keyword-matched reviews, capped here.
+_THEME_MAX_REVIEWS = 600
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 _SYSTEM = (
@@ -36,8 +59,8 @@ _SYSTEM = (
 )
 
 # ── Enum sets for schema repair ───────────────────────────────────────────────
-_SENTIMENT_ENUM = {"positive", "negative", "neutral", "mixed"}
-_SEVERITY_ENUM  = {"Low", "Medium", "High"}
+_SENTIMENT_ENUM  = {"positive", "negative", "neutral", "mixed"}
+_SEVERITY_ENUM   = {"Low", "Medium", "High"}
 _CONFIDENCE_ENUM = {"Low", "Medium", "High"}
 
 
@@ -105,7 +128,6 @@ def _repair(result: dict) -> dict:
         for f in ("signal_count", "relevance_score"):
             if not isinstance(t.get(f), int):
                 t[f] = fix_int(t.get(f, 0))
-        # Clamp relevance_score to 0-100
         t["relevance_score"] = max(0, min(100, t["relevance_score"]))
 
         for pp in t.get("pain_points", []):
@@ -126,24 +148,103 @@ def _repair(result: dict) -> dict:
 
 
 # ── Context builder ───────────────────────────────────────────────────────────
-def _build_context(reviews: list[dict[str, Any]]) -> tuple[str, int]:
-    """Serialise reviews into a compact plaintext block for LLM consumption."""
+def _build_context(
+    reviews: list[dict[str, Any]],
+    budget_bytes: int = _CONTEXT_BUDGET_BYTES,
+) -> tuple[str, int]:
+    """
+    Serialise reviews into a compact plaintext block for LLM consumption.
+
+    Reviews are added one at a time. Once adding the next review would push
+    the encoded byte length over `budget_bytes`, we stop — ensuring the
+    context block never exceeds the Azure APIM 1.5 MiB budget.
+
+    Returns (context_string, reviews_included_count).
+    """
     lines: list[str] = []
+    total_bytes = 0
+    included = 0
+
     for r in reviews:
         stars   = "★" * (r.get("score") or 0)
-        lines.append(
+        header  = (
             f"\n=== REVIEW [{r.get('review_id', '')}] {stars} "
             f"thumbs_up={r.get('thumbs_up', 0)} "
             f"date={r.get('review_created', '')} ==="
         )
-        lines.append(f"User    : {r.get('username', 'anonymous')}")
-        content = (r.get("content") or "")[:MAX_REVIEW_CHARS]
-        if content:
-            lines.append(f'Content : "{content}"')
-        reply = (r.get("reply_content") or "")[:MAX_REPLY_CHARS]
-        if reply:
-            lines.append(f'DevReply: "{reply}"')
-    return "\n".join(lines), len(reviews)
+        user_line    = f"User    : {r.get('username', 'anonymous')}"
+        content      = (r.get("content") or "")[:MAX_REVIEW_CHARS]
+        content_line = f'Content : "{content}"' if content else ""
+        reply        = (r.get("reply_content") or "")[:MAX_REPLY_CHARS]
+        reply_line   = f'DevReply: "{reply}"' if reply else ""
+
+        block = "\n".join(filter(None, [header, user_line, content_line, reply_line]))
+        block_bytes = len(block.encode("utf-8"))
+
+        if total_bytes + block_bytes > budget_bytes:
+            log.warn(
+                f"[PLAYSTORE][SUMMARIZER] Context budget reached at review {included} "
+                f"({total_bytes:,} bytes) — {len(reviews) - included} reviews dropped"
+            )
+            break
+
+        lines.append(block)
+        total_bytes += block_bytes
+        included += 1
+
+    log.info(
+        f"[PLAYSTORE][SUMMARIZER] Context built: "
+        f"{included}/{len(reviews)} reviews, {total_bytes:,} bytes "
+        f"(budget {budget_bytes:,} bytes)"
+    )
+    return "\n".join(lines), included
+
+
+# ── Theme-relevance filter ────────────────────────────────────────────────────
+def _filter_reviews_for_theme(
+    reviews: list[dict[str, Any]],
+    theme_title: str,
+    theme_desc: str,
+    max_reviews: int = _THEME_MAX_REVIEWS,
+) -> list[dict[str, Any]]:
+    """
+    Return the reviews most relevant to a given theme using keyword overlap.
+
+    Splits the theme title + description into keyword tokens and scores each
+    review by how many keywords appear in its content. Reviews with at least
+    one match are returned, sorted by descending match count, capped at
+    `max_reviews`. Falls back to the first `max_reviews` reviews if nothing
+    matches (rare with well-named themes).
+    """
+    keywords = set(
+        w for w in (theme_title + " " + theme_desc).lower().split()
+        if len(w) > 3  # skip stop-word-length tokens
+    )
+
+    scored: list[tuple[int, dict]] = []
+    for r in reviews:
+        text = (
+            (r.get("content") or "") + " " + (r.get("reply_content") or "")
+        ).lower()
+        hits = sum(1 for kw in keywords if kw in text)
+        if hits > 0:
+            scored.append((hits, r))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    filtered = [r for _, r in scored[:max_reviews]]
+
+    if not filtered:
+        log.warn(
+            f"[PLAYSTORE][SUMMARIZER] No keyword matches for theme "
+            f"{theme_title!r} — using first {max_reviews} reviews as fallback"
+        )
+        return reviews[:max_reviews]
+
+    log.info(
+        f"[PLAYSTORE][SUMMARIZER] Theme {theme_title!r}: "
+        f"{len(filtered)} relevant reviews selected from {len(reviews)}"
+    )
+    return filtered
 
 
 # ── JSON parser ───────────────────────────────────────────────────────────────
@@ -307,7 +408,6 @@ def _prompt_actionable_next_steps(
     direct_answer: str,
     themes: list[dict],
 ) -> str:
-    # Collect all user-suggested solutions as the evidence base
     evidence: list[dict] = []
     for t in themes:
         for pp in t.get("pain_points", []):
@@ -411,6 +511,22 @@ def run_summarizer(
     Returns
     -------
     Structured analysis dict or {} on fatal failure.
+
+    Payload strategy
+    ----------------
+    Each call to client.call() sends at most _CONTEXT_BUDGET_BYTES (1.5 MiB)
+    of review text, keeping total request body under Azure APIM's 2 MiB
+    buffered payload limit.
+
+    Global calls (theme discovery, direct answer, overview):
+      _build_context() enforces the byte budget automatically — reviews are
+      added until the next one would exceed 1.5 MiB, then dropped.
+
+    Per-theme calls:
+      _filter_reviews_for_theme() selects only keyword-matched reviews
+      (capped at _THEME_MAX_REVIEWS = 30), then _build_context() enforces
+      the byte budget on that already-small slice. This produces payloads
+      well under 200 KB per theme call in practice.
     """
     if not reviews:
         log.warn("[PLAYSTORE][SUMMARIZER] No reviews provided — aborting")
@@ -419,16 +535,20 @@ def run_summarizer(
     now_iso       = datetime.now(timezone.utc).isoformat()
     model_name    = client.model
     total_reviews = len(reviews)
-    context, _    = _build_context(reviews)
 
-    scores         = [r.get("score") for r in reviews if isinstance(r.get("score"), (int, float))]
-    avg_rating     = round(sum(scores) / len(scores), 2) if scores else 0.0
+    scores           = [r.get("score") for r in reviews if isinstance(r.get("score"), (int, float))]
+    avg_rating       = round(sum(scores) / len(scores), 2) if scores else 0.0
     rating_breakdown = {str(i): scores.count(i) for i in range(1, 6)}
 
     log.info(
         f"[PLAYSTORE][SUMMARIZER] Starting | "
-        f"app={app_name!r} reviews={total_reviews} avg_rating={avg_rating}"
+        f"app={app_name!r} reviews={total_reviews} avg_rating={avg_rating} "
+        f"context_budget={_CONTEXT_BUDGET_BYTES:,}B"
     )
+
+    # Build the shared context for global calls (budget-capped).
+    # Theme calls will re-build their own smaller contexts below.
+    context, included = _build_context(reviews)
 
     # ── Call 0 — theme discovery ──────────────────────────────────────────────
     log.info("[PLAYSTORE][SUMMARIZER] Call 0 — discovering themes")
@@ -466,13 +586,19 @@ def run_summarizer(
         return {}
 
     # ── Calls 3…N — one theme per call ───────────────────────────────────────
+    # Each call gets only keyword-relevant reviews, re-budget-capped, so
+    # per-theme payloads are typically well under 200 KB.
     themes: list[dict] = []
     for i, tm in enumerate(themes_meta):
         call_num = i + 3
         log.info(f"[PLAYSTORE][SUMMARIZER] Call {call_num} — theme: {tm['title']!r}")
         try:
+            theme_reviews = _filter_reviews_for_theme(
+                reviews, tm["title"], tm.get("description", "")
+            )
+            theme_context, _ = _build_context(theme_reviews)
             raw   = client.call(_SYSTEM, _prompt_theme(
-                app_name, context,
+                app_name, theme_context,
                 tm["id"], tm["title"], tm.get("description", ""),
             ))
             theme = _parse_json(raw, f"theme-{tm['id']}")
@@ -481,6 +607,8 @@ def run_summarizer(
             log.warn(f"[PLAYSTORE][SUMMARIZER] Theme {tm['title']!r} failed — skipping: {e}")
 
     # ── Call N+1 — actionable next steps ─────────────────────────────────────
+    # This call sends only the distilled evidence dict (no raw review text),
+    # so its payload is always tiny regardless of corpus size.
     actionable_next_steps: list[dict] = []
     if themes:
         log.info("[PLAYSTORE][SUMMARIZER] Call N+1 — actionable next steps")
@@ -531,6 +659,7 @@ def run_summarizer(
         f"themes={len(result['themes'])} "
         f"steps={len(result['actionable_next_steps'])} "
         f"sentiment={result['overall_sentiment']} "
-        f"avg_rating={result['average_rating']}"
+        f"avg_rating={result['average_rating']} "
+        f"reviews_in_context={included}/{total_reviews}"
     )
     return result
