@@ -17,12 +17,14 @@ app = FastAPI(
     root_path='/api',
     lifespan=lifespan
 )
+
 authX.handle_errors(app)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://problempulseai.vercel.app",
+        "http://localhost:3001",
         "http://localhost:3000",
     ],  
     allow_credentials=True,

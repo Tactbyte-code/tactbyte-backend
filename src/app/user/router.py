@@ -12,7 +12,6 @@ from src.app.admin.model import Admin
 
 router = APIRouter(tags=["User Auth"])
 
-
 @router.post("/auth/check-provider")
 async def check_provider_route(
     body: CheckProviderRequest,
