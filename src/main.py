@@ -26,6 +26,7 @@ app.add_middleware(
         "https://problempulseai.vercel.app",
         "http://localhost:3001",
         "http://localhost:3000",
+        "https://demo-server-rtl3.vercel.app",
     ],  
     allow_credentials=True,
     allow_methods=["*"],
