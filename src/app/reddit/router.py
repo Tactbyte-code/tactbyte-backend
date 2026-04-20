@@ -129,3 +129,20 @@ async def get_queries(
     current_user = Depends(require_admin),
 ):
     return await services.get_all_query(db)
+
+@router.get("/admin/query/{query_id}/result")
+async def admin_get_result(
+    query_id: UUID,
+    db: AsyncSession = Depends(session),
+    current_user=Depends(require_admin),
+):
+    return await services.admin_get_result(query_id, db)
+
+
+@router.get("/admin/query/{query_id}/posts")
+async def admin_get_posts(
+    query_id: UUID,
+    db: AsyncSession = Depends(session),
+    current_user=Depends(require_admin),
+):
+    return await services.admin_get_posts(query_id, db)

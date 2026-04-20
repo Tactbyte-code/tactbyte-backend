@@ -94,13 +94,39 @@ async def get_query(query_id: UUID, db: AsyncSession, current_user: User) -> dic
         "summarized_at":        record.summarized_at,
     }
     
-async def get_all_query(db: AsyncSession):
+async def get_all_query(db: AsyncSession) -> list[dict]:
     result = await db.execute(
-        select(RedditQuery)
+        select(RedditQuery, RedditSummary)
+        .outerjoin(RedditSummary, RedditSummary.query_id == RedditQuery.id)
+        .order_by(RedditQuery.created_at.desc())
     )
-    return result.scalars().all() or []
+    rows = result.all()
 
+    def _fmt(val) -> str | None:
+        """Return ISO string whether val is a datetime or already a string."""
+        if val is None:
+            return None
+        return val.isoformat() if hasattr(val, "isoformat") else str(val)
 
+    return [
+        {
+            "id":                   str(q.id),
+            "job_id":               str(q.id),          # frontend uses job_id to open result drawer
+            "user_id":              q.user_id,
+            "user_email":           q.user_email,
+            "query":                q.query,
+            "status":               q.status,
+            "failure_reason":       q.failure_reason,
+            "failed_at_step":       q.failed_at_step,
+            "created_at":           _fmt(q.created_at),
+            "searched_at":          _fmt(q.searched_at),
+            "summarized_at":        _fmt(q.summarized_at),
+            # summary fields expected by HistoryItem on the frontend
+            "summary_subreddit":    s.subreddit if s else None,
+            "summary_analyzed_at":  _fmt(s.analyzed_at) if s else None,
+        }
+        for q, s in rows
+    ]
 
 async def list_queries(status: str | None, db: AsyncSession, current_user: User) -> list[dict]:
     q = select(
@@ -403,3 +429,41 @@ async def _get_query_or_404(query_id: UUID, user_id: int, db: AsyncSession) -> R
     if not record:
         raise HTTPException(status_code=404, detail="Query not found")
     return record
+
+
+async def admin_get_result(query_id: UUID, db: AsyncSession) -> RedditSummary:
+    """Admin version — no user ownership check."""
+    result = await db.execute(
+        select(RedditSummary).where(RedditSummary.query_id == query_id)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=404, detail="Result not found")
+    return record
+
+
+async def admin_get_posts(query_id: UUID, db: AsyncSession) -> dict:
+    """Admin version — no user ownership check."""
+    result = await db.execute(
+        select(RedditPost)
+        .where(RedditPost.query_id == query_id)
+        .order_by(RedditPost.created_at.asc())
+    )
+    posts = result.scalars().all()
+    return {
+        "id":    str(query_id),
+        "total": len(posts),
+        "posts": [
+            {
+                "id":            str(p.id),
+                "title":         p.title,
+                "url":           p.url,
+                "snippet":       p.snippet,
+                "subreddit":     p.reddit_subreddit,
+                "score":         p.reddit_score,
+                "num_comments":  p.reddit_num_comments,
+                "user_approved": p.user_approved,
+            }
+            for p in posts
+        ],
+    }
