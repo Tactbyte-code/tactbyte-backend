@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     GOOGLE_APPLICATION_CREDENTIALS_JSON: str
 
     # CORS
-    ALLOWED_ORIGINS: str = "https://problempulseai.vercel.app/"
+    ALLOWED_ORIGINS: str = ""
 
     @computed_field
     @property
