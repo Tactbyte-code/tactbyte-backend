@@ -7,6 +7,7 @@ class QueryInput(BaseModel):
     
 class ClarifyingAnswerInput(BaseModel):
     answer: str
+    selected_option: Optional[str] = None
     
 class UpdatePostApproval(BaseModel):
     user_approved: bool
