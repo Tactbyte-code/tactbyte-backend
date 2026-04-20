@@ -52,18 +52,23 @@ async def create_query(body: QueryInput, db: AsyncSession, current_user: User) -
             "failure_reason": record.failure_reason,
             "failed_at_step": record.failed_at_step,
         }
-
+        
     if intent.needs_clarification:
         record.start_step(QueryStatus.CLARIFYING)
         record.clarification_count  = 1
         record.conversation_history = conversation_history + [
-            {"role": "assistant", "content": intent.question}
+            {
+                "role": "assistant",
+                "content": intent.question,
+                "options": intent.options,
+            }
         ]
         await db.commit()
         return {
             "id":                  str(record.id),
             "status":              record.status,
             "question":            intent.question,
+            "options":             intent.options,
             "clarification_count": record.clarification_count,
         }
 
@@ -152,9 +157,13 @@ async def submit_clarification(
         }
 
     if intent.needs_clarification:
-        record.clarification_count  += 1
-        record.conversation_history  = updated_history + [
-            {"role": "assistant", "content": intent.question}
+        record.clarification_count += 1
+        record.conversation_history = updated_history + [
+            {
+                "role": "assistant",
+                "content": intent.question,
+                "options": intent.options,
+            }
         ]
         record.start_step(QueryStatus.CLARIFYING)
         await db.commit()
@@ -162,6 +171,7 @@ async def submit_clarification(
             "id":                  str(record.id),
             "status":              record.status,
             "question":            intent.question,
+            "options":             intent.options,
             "clarification_count": record.clarification_count,
         }
 

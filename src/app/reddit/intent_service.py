@@ -12,6 +12,7 @@ MAX_CLARIFICATION_ROUNDS = 5
 class IntentResult(BaseModel):
     needs_clarification: bool
     question:            Optional[str] = None
+    options:             Optional[list[str]] = None
 
 
 class IntentExtractionError(Exception):
