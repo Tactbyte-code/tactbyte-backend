@@ -22,12 +22,7 @@ authX.handle_errors(app)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://admin-ppai.vercel.app",
-        "http://localhost:3001",
-        "http://localhost:3000",
-        "https://demo-server-rtl3.vercel.app",
-    ],  
+    allow_origins=settings.allowed_origins,  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
