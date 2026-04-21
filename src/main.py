@@ -27,6 +27,7 @@ app.add_middleware(
         "http://localhost:3001",
         "http://localhost:3000",
         "https://demo-server-rtl3.vercel.app",
+        "https://tactbyte-backend-785x8djpz-interntactbyte-4198s-projects.vercel.app"
     ],  
     allow_credentials=True,
     allow_methods=["*"],
