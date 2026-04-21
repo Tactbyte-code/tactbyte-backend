@@ -23,11 +23,10 @@ authX.handle_errors(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://problempulseai.vercel.app",
+        "https://admin-ppai.vercel.app",
         "http://localhost:3001",
         "http://localhost:3000",
         "https://demo-server-rtl3.vercel.app",
-        "https://tactbyte-backend-785x8djpz-interntactbyte-4198s-projects.vercel.app"
     ],  
     allow_credentials=True,
     allow_methods=["*"],
