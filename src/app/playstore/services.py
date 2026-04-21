@@ -163,3 +163,10 @@ async def _get_query_or_404(query_id: UUID, user_id: int, db: AsyncSession) -> P
     if not record:
         raise HTTPException(status_code=404, detail="Query not found")
     return record
+
+
+# async def get_all_queries(db: AsyncSession):
+#     result = await db.execute(
+#         select(PlaystoreQuery).order_by(PlaystoreQuery.created_at.desc())
+#     )
+#     return result.scalars().all()

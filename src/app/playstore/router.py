@@ -104,9 +104,9 @@ async def retry_summarize(
     return await services.retry_summarize(query_id, db, current_user)
 
 
-@router.get("/admin/queries")
-async def get_all_queries(
-    db: AsyncSession = Depends(session),
-    current_user=Depends(require_admin),
-):
-    return await services.get_all_queries(db)
+# @router.get("/admin/queries")
+# async def get_all_queries(
+#     db: AsyncSession = Depends(session),
+#     current_user=Depends(require_admin),
+# ):
+#     return await services.get_all_queries(db)
