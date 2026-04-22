@@ -8,6 +8,9 @@ from src.app.user.model import User
 from src.app.plan.model import UserPlan
 from src.app.plan import services as plan_services
 from src.app.plan.schema import PurchasePlanRequest, UserPlanResponse, UserWithPlanResponse
+from sqlalchemy import select
+from src.app.user.model import User
+from src.app.middleware.auth import require_admin
 
 router = APIRouter(tags=["Plan"])
 
@@ -89,3 +92,31 @@ async def deduct_credit(
 ):
     user_plan = await plan_services.deduct_credit(current_user, db)
     return build_user_response(current_user, user_plan)
+
+
+@router.get("/admin/users/plans")
+async def admin_get_users_with_plans(
+    db: AsyncSession = Depends(session),
+    _: User = Depends(require_admin),
+):
+    result = await db.execute(
+        select(User, UserPlan)
+        .outerjoin(UserPlan, UserPlan.user_id == User.id)
+        .order_by(User.id)
+    )
+    rows = result.all()
+
+    users = []
+    for user, plan in rows:
+        users.append({
+            "id": user.id,
+            "full_name": user.full_name,
+            "email": user.email,
+            "photo_url": user.photo_url,
+            "auth_provider": getattr(user, "auth_provider", None),
+            "created_at": str(user.created_at) if user.created_at else None,
+            "plan": plan.plan if plan else None,
+            "plan_period": None, 
+            "plan_expires_at": str(plan.expires_at) if plan else None,
+        })
+    return users

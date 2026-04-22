@@ -18,6 +18,7 @@ from src.app.user.schema import (
 )
 from src.app.user.services import get_user_by_email
 from src.app.utils.email import send_otp_email
+from src.app.activity import services as activity_services
 
 
 async def check_provider(body: CheckProviderRequest, db: AsyncSession) -> dict:
@@ -31,6 +32,8 @@ async def check_provider(body: CheckProviderRequest, db: AsyncSession) -> dict:
 async def google_auth(body: GoogleSignUp, db: AsyncSession) -> User:
     user = await get_user_by_email(body.email)
     if user:
+        # Returning user — record login activity
+        await activity_services.ping_user(db, user.id, "login")
         return user
 
     user = User(
@@ -41,7 +44,10 @@ async def google_auth(body: GoogleSignUp, db: AsyncSession) -> User:
         hashed_password=None,
     )
     db.add(user)
-    await db.flush()
+    await db.flush()  # flush to get user.id before pinging
+
+    # New user — record register activity
+    await activity_services.ping_user(db, user.id, "register")
     return user
 
 
@@ -58,6 +64,9 @@ async def email_signup(body: EmailSignUp, db: AsyncSession) -> User:
     )
     db.add(user)
     await db.flush()
+
+    # New user — record register activity
+    await activity_services.ping_user(db, user.id, "register")
     return user
 
 
@@ -75,6 +84,8 @@ async def email_login(body: EmailSignUp, db: AsyncSession) -> User:
     if not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect password")
 
+    # Successful login — record login activity
+    await activity_services.ping_user(db, user.id, "login")
     return user
 
 
