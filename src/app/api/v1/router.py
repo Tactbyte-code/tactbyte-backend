@@ -9,6 +9,7 @@ from src.app.playstore.router import router as playstore_router
 from src.app.playstore.admin_router import router as playstore_admin_router
 from src.app.feedback.router import router as feedback_router
 from src.app.activity.router import router as activity_routers
+from src.app.teams.router import router as teams_router
 
 router = APIRouter(prefix="/v1")
 
@@ -17,6 +18,7 @@ router.include_router(admin_router, prefix="/admin")
 router.include_router(admin_reddit_router, prefix="/admin")
 router.include_router(playstore_admin_router, prefix="/admin")
 router.include_router(activity_routers)
+router.include_router(teams_router)
 
 # Public Routes
 router.include_router(user_router)
