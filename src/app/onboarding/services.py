@@ -44,3 +44,19 @@ async def get_my_onboarding(
     if not record:
         raise HTTPException(status_code=404, detail="Onboarding not found")
     return record
+
+
+# ── Admin helper ─────────────────────────────────────────────────────────────
+async def get_onboarding_by_user_id(
+    user_id: int,
+    db: AsyncSession,
+) -> Onboarding:
+    result = await db.execute(
+        select(Onboarding).where(Onboarding.user_id == user_id)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(
+            status_code=404, detail="No onboarding record found for this user"
+        )
+    return record
