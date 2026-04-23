@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from src.core.database import session
 from src.app.middleware.auth import require_admin
-from app.masters.prices import models, schemas
+from src.app.masters.prices import models, schemas
 
 router = APIRouter(prefix="/prices", tags=["Prices"])
 
