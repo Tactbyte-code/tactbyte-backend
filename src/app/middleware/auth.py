@@ -15,6 +15,7 @@ from src.app.admin.model import Admin
 
 security = HTTPBearer()
 
+
 async def verify_firebase_token(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> dict:
@@ -46,6 +47,14 @@ async def require_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
+
+    # Block disabled accounts on every protected route
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been disabled. Please contact support.",
+        )
+
     return user
 
 
@@ -71,7 +80,7 @@ async def require_any(
 ) -> User | Admin:
     token = credentials.credentials
 
-    # try Firebase (user) first
+    # Try Firebase (user) first
     try:
         loop = get_event_loop()
         decoded = await loop.run_in_executor(
@@ -83,11 +92,19 @@ async def require_any(
         )
         user = result.scalar_one_or_none()
         if user:
+            # Block disabled accounts even in shared routes
+            if not user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Your account has been disabled. Please contact support.",
+                )
             return user
+    except HTTPException:
+        raise  # Re-raise the 403 — don't fall through to admin check
     except Exception:
         pass
 
-    # fall back to admin JWT
+    # Fall back to admin JWT
     try:
         payload = authX.verify_token(token, type="access")
         result = await db.execute(

@@ -12,9 +12,11 @@ class User(Base):
     photo_url = Column(String, nullable=True)
     hashed_password = Column(String, nullable=True)
     is_onboarded = Column(Boolean, default=False)
-    
-    created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
 class OTPRecord(Base):
     __tablename__ = "otp_records"
 
@@ -24,4 +26,4 @@ class OTPRecord(Base):
     reset_token = Column(String, nullable=True)
     is_used = Column(Boolean, default=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
-    created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
