@@ -11,6 +11,7 @@ from src.app.feedback.router import router as feedback_router
 from src.app.activity.router import router as activity_routers
 from src.app.teams.router import router as teams_router
 from src.app.tickets.router import router as ticket_router
+from src.app.masters.prices import router as price_router
 router = APIRouter(prefix="/v1")
 
 # Admin Routes
@@ -20,6 +21,7 @@ router.include_router(playstore_admin_router, prefix="/admin")
 router.include_router(activity_routers)
 router.include_router(teams_router)
 router.include_router(ticket_router)
+router.include_router(price_router)
 
 # Public Routes
 router.include_router(user_router)

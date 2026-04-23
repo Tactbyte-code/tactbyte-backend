@@ -8,3 +8,4 @@ from src.app.playstore.model import PlaystoreQuery, PlaystoreReview, PlaystoreSu
 from src.app.activity.model import UserActivity, UserActivityLog
 from src.app.teams.models import Team
 from src.app.tickets.models import TicketStatus, TicketPriority, TicketType, UserPlan, Ticket, TicketReply
+from src.app.masters.prices.models import Price
