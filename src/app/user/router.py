@@ -83,3 +83,14 @@ async def get_user(user_id: int, current_admin: Admin = Depends(require_admin)) 
             detail="User not found",
         )
     return user
+
+@router.delete("/users/{user_id}")
+async def delete_user(user_id: int, current_admin: Admin = Depends(require_admin)):
+    user = await user_services.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    await user_services.delete_user(user_id)
+    return {"message": "User deleted successfully"}

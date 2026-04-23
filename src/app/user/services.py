@@ -32,3 +32,11 @@ async def get_users_count() -> int:
             select(func.count(User.id))
         )
         return result.scalar()
+    
+    
+async def delete_user(user_id: int):
+    async with AsyncSessionLocal() as db:
+        user = await db.get(User, user_id)
+        if user:
+            await db.delete(user)
+            await db.commit()
