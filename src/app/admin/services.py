@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -34,8 +36,8 @@ async def create_admin(body: AdminCreate, db: AsyncSession) -> dict:
         raise HTTPException(status_code=409, detail="An admin with this email already exists.")
 
     # 2. Hash password
-    
     hashed = security.get_password_hash(body.password)
+
     # 3. Persist
     new_admin = Admin(
         name            = body.name,
@@ -48,14 +50,15 @@ async def create_admin(body: AdminCreate, db: AsyncSession) -> dict:
     await db.commit()
     await db.refresh(new_admin)
 
-    # 4. Send credentials email — capture success/failure for the response
+    # 4. Send credentials email via thread so blocking SMTP doesn't kill the event loop
     email_sent = False
     try:
-        send_admin_credentials(
-            to_email  = body.email,
-            full_name = body.name,
-            password  = body.password,
-            role      = body.role,
+        await asyncio.to_thread(
+            send_admin_credentials,
+            body.email,
+            body.name,
+            body.password,
+            body.role,
         )
         email_sent = True
     except Exception as mail_err:
@@ -66,8 +69,8 @@ async def create_admin(body: AdminCreate, db: AsyncSession) -> dict:
         "name":       new_admin.name,
         "email":      new_admin.email,
         "role":       new_admin.role,
-        "email_sent": email_sent,          # ← frontend reads this
-        "message":    (
+        "email_sent": email_sent,
+        "message": (
             "Admin created successfully. Credentials sent to their email."
             if email_sent else
             "Admin created. (Email delivery failed — check SMTP config.)"
