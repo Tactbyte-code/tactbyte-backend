@@ -31,31 +31,23 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>Admin Credentials</title>
   <style>
-    /* ── Reset ── */
     * {{ box-sizing: border-box; }}
     body {{ margin:0; padding:0; background:#f1f5f9; }}
     img  {{ border:0; display:block; }}
     a    {{ color:inherit; }}
 
-    /* ── Outer wrapper ── */
     .wrapper {{
       width:100%;
       background:#f1f5f9;
       padding:48px 16px;
     }}
-
-    /* ── Card container ── */
     .container {{
       width:100%;
       max-width:560px;
       margin:0 auto;
     }}
 
-    /* ── Brand row ── */
-    .brand {{
-      text-align:center;
-      margin-bottom:24px;
-    }}
+    .brand {{ text-align:center; margin-bottom:24px; }}
     .brand-inner {{
       display:inline-flex;
       align-items:center;
@@ -83,7 +75,6 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
     }}
     .brand-name span {{ color:#0ea5e9; }}
 
-    /* ── Main card ── */
     .card {{
       background:#ffffff;
       border-radius:20px;
@@ -95,9 +86,7 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       background:linear-gradient(90deg,#0ea5e9,#7c3aed);
       font-size:0; line-height:0;
     }}
-    .card-body {{
-      padding:40px;
-    }}
+    .card-body  {{ padding:40px; }}
     .card-footer {{
       background:#f8fafc;
       border-top:1px solid #f1f5f9;
@@ -105,7 +94,6 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       text-align:center;
     }}
 
-    /* ── Typography ── */
     .label {{
       margin:0 0 14px;
       font-size:10px; font-weight:700;
@@ -134,7 +122,6 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       font-size:11px; color:#94a3b8;
     }}
 
-    /* ── Role badge ── */
     .badge {{
       display:inline-block;
       background:{role_bg};
@@ -147,7 +134,6 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       margin-bottom:28px;
     }}
 
-    /* ── Credential fields ── */
     .field {{
       background:#f8fafc;
       border:1px solid #e2e8f0;
@@ -180,11 +166,7 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       letter-spacing:2px;
     }}
 
-    /* ── CTA button ── */
-    .btn-wrap {{
-      text-align:center;
-      margin-bottom:24px;
-    }}
+    .btn-wrap {{ text-align:center; margin-bottom:24px; }}
     .btn {{
       display:inline-block;
       background:linear-gradient(135deg,#0ea5e9,#7c3aed);
@@ -196,7 +178,6 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       letter-spacing:0.3px;
     }}
 
-    /* ── Warning box ── */
     .warning {{
       background:#fffbeb;
       border:1px solid #fde68a;
@@ -215,15 +196,14 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       font-size:13px; color:#78350f; line-height:1.6;
     }}
 
-    /* ── Mobile ── */
     @media only screen and (max-width:600px) {{
-      .wrapper  {{ padding:24px 12px !important; }}
-      .card-body {{ padding:28px 20px !important; }}
+      .wrapper     {{ padding:24px 12px !important; }}
+      .card-body   {{ padding:28px 20px !important; }}
       .card-footer {{ padding:14px 20px !important; }}
-      .heading  {{ font-size:20px !important; }}
-      .btn      {{ padding:13px 24px !important; font-size:13px !important; display:block !important; text-align:center !important; }}
-      .field    {{ padding:12px 14px !important; }}
-      .field-value {{ font-size:13px !important; }}
+      .heading     {{ font-size:20px !important; }}
+      .btn         {{ padding:13px 24px !important; font-size:13px !important; display:block !important; text-align:center !important; }}
+      .field       {{ padding:12px 14px !important; }}
+      .field-value    {{ font-size:13px !important; }}
       .field-value-pw {{ font-size:14px !important; letter-spacing:1px !important; }}
     }}
   </style>
@@ -232,7 +212,6 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
 <div class="wrapper">
   <div class="container">
 
-    <!-- Brand -->
     <div class="brand">
       <div class="brand-inner">
         <div class="brand-icon">
@@ -244,12 +223,10 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       </div>
     </div>
 
-    <!-- Card -->
     <div class="card">
       <div class="card-accent">&nbsp;</div>
 
       <div class="card-body">
-
         <p class="label">Account Access</p>
         <h1 class="heading">Welcome, {full_name}</h1>
         <p class="subtext">
@@ -257,7 +234,6 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
           to sign in and change your password on first login.
         </p>
 
-        <!-- Role badge -->
         <div>
           <span class="badge">{role_label}</span>
         </div>
@@ -266,24 +242,20 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
 
         <p class="label">Login Credentials</p>
 
-        <!-- Email -->
         <div class="field">
           <p class="field-label">Email Address</p>
           <p class="field-value">{to_email}</p>
         </div>
 
-        <!-- Password -->
         <div class="field field-pw">
           <p class="field-label">Temporary Password</p>
           <p class="field-value field-value-pw">{password}</p>
         </div>
 
-        <!-- CTA -->
         <div class="btn-wrap">
           <a href="{PANEL_URL}" class="btn">Sign in to Admin Panel</a>
         </div>
 
-        <!-- Warning -->
         <div class="warning">
           <p class="warning-title">Security Notice</p>
           <p class="warning-body">
@@ -291,10 +263,8 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
             Keep these credentials confidential — do not share them with anyone.
           </p>
         </div>
-
       </div>
 
-      <!-- Footer -->
       <div class="card-footer">
         <p class="footer-text">
           This is an automated message. Please do not reply to this email.<br/>
@@ -303,7 +273,6 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       </div>
     </div>
 
-    <!-- Bottom note -->
     <p class="bottom-note">
       &copy; 2025 AdminPanel &mdash; All rights reserved.
     </p>
@@ -317,11 +286,11 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
 
     try:
         if SMTP_PORT == 465:
-            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10) as server:
                 server.login(SMTP_EMAIL, SMTP_PASSWORD)
                 server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
         else:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
                 server.starttls()
                 server.login(SMTP_EMAIL, SMTP_PASSWORD)
                 server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
