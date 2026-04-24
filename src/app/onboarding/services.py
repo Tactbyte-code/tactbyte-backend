@@ -60,3 +60,11 @@ async def get_onboarding_by_user_id(
             status_code=404, detail="No onboarding record found for this user"
         )
     return record
+
+
+ 
+ 
+async def get_all_onboarding(db: AsyncSession) -> list:
+    result = await db.execute(select(Onboarding))
+    return result.scalars().all()
+ 

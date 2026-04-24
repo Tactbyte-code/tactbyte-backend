@@ -1,43 +1,46 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from src.core.database import session
 from src.app.middleware.auth import require_admin
-from app.masters.packages import models, schemas
+from src.app.masters.packages import models, schemas
 
 router = APIRouter(prefix="/packages", tags=["Packages"])
 
 
-# ── GET /packages/ ─────────────────────────────────────────────
+def _with_prices():
+    """Reusable selectinload options for price relationships."""
+    return [
+        selectinload(models.Package.monthly_price),
+        selectinload(models.Package.annual_price),
+    ]
+
+
 @router.get("/", response_model=list[schemas.PackageResponse])
-async def get_all_packages(
-    db: AsyncSession = Depends(session),
-):
+async def get_all_packages(db: AsyncSession = Depends(session)):
     result = await db.execute(
-        select(models.Package).order_by(models.Package.id.asc())
+        select(models.Package)
+        .options(*_with_prices())
+        .order_by(models.Package.id.asc())
     )
     return result.scalars().all()
 
 
-# ── GET /packages/{package_id} ─────────────────────────────────
 @router.get("/{package_id}", response_model=schemas.PackageResponse)
-async def get_package(
-    package_id: int,
-    db: AsyncSession = Depends(session),
-):
+async def get_package(package_id: int, db: AsyncSession = Depends(session)):
     result = await db.execute(
-        select(models.Package).where(models.Package.id == package_id)
+        select(models.Package)
+        .options(*_with_prices())
+        .where(models.Package.id == package_id)
     )
     pkg = result.scalar_one_or_none()
-
     if not pkg:
         raise HTTPException(status_code=404, detail="Package not found")
-
     return pkg
 
 
-# ── POST /packages/ ────────────────────────────────────────────
 @router.post("/", response_model=schemas.PackageResponse)
 async def create_package(
     data: schemas.PackageCreate,
@@ -51,15 +54,18 @@ async def create_package(
         monthly_price_id=data.monthly_price_id,
         annual_price_id=data.annual_price_id,
     )
-
     db.add(pkg)
     await db.commit()
-    await db.refresh(pkg)
 
-    return pkg
+    # Re-fetch with relationships loaded instead of relying on refresh
+    result = await db.execute(
+        select(models.Package)
+        .options(*_with_prices())
+        .where(models.Package.id == pkg.id)
+    )
+    return result.scalar_one()
 
 
-# ── PUT /packages/{package_id} ─────────────────────────────────
 @router.put("/{package_id}", response_model=schemas.PackageResponse)
 async def update_package(
     package_id: int,
@@ -68,10 +74,11 @@ async def update_package(
     current_admin=Depends(require_admin),
 ):
     result = await db.execute(
-        select(models.Package).where(models.Package.id == package_id)
+        select(models.Package)
+        .options(*_with_prices())
+        .where(models.Package.id == package_id)
     )
     pkg = result.scalar_one_or_none()
-
     if not pkg:
         raise HTTPException(status_code=404, detail="Package not found")
 
@@ -81,20 +88,22 @@ async def update_package(
         pkg.description = data.description
     if data.features is not None:
         pkg.features = data.features
-
-    # allow null updates
     if "monthly_price_id" in data.model_fields_set:
         pkg.monthly_price_id = data.monthly_price_id
     if "annual_price_id" in data.model_fields_set:
         pkg.annual_price_id = data.annual_price_id
 
     await db.commit()
-    await db.refresh(pkg)
 
-    return pkg
+    # Re-fetch to get updated relationships
+    result = await db.execute(
+        select(models.Package)
+        .options(*_with_prices())
+        .where(models.Package.id == package_id)
+    )
+    return result.scalar_one()
 
 
-# ── DELETE /packages/{package_id} ──────────────────────────────
 @router.delete("/{package_id}")
 async def delete_package(
     package_id: int,
@@ -105,11 +114,9 @@ async def delete_package(
         select(models.Package).where(models.Package.id == package_id)
     )
     pkg = result.scalar_one_or_none()
-
     if not pkg:
         raise HTTPException(status_code=404, detail="Package not found")
 
     await db.delete(pkg)
     await db.commit()
-
     return {"message": "Package deleted successfully"}

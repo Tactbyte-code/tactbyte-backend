@@ -9,6 +9,7 @@ from src.app.onboarding.services import (
     submit_onboarding,
     get_my_onboarding,
     get_onboarding_by_user_id,
+    get_all_onboarding,  
 )
 
 router = APIRouter(tags=["Onboarding"])
@@ -29,6 +30,23 @@ async def get_my_onboarding_route(
 ):
     return await get_my_onboarding(db, current_user)
 
+@router.get("/admin/onboarding/{user_id}")
+async def get_user_onboarding_admin(
+    user_id: int,
+    db: AsyncSession = Depends(session),
+    _admin=Depends(require_admin),
+):
+    return await get_onboarding_by_user_id(user_id, db)
+
+
+@router.get("/admin/onboarding")
+async def get_all_onboarding_admin(
+    db: AsyncSession = Depends(session),
+    _admin=Depends(require_admin),
+):
+    return await get_all_onboarding(db)
+ 
+ 
 @router.get("/admin/onboarding/{user_id}")
 async def get_user_onboarding_admin(
     user_id: int,
