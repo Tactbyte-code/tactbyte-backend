@@ -6,11 +6,14 @@ WORKDIR /app
 # Environment
 ENV PYTHONUNBUFFERED=1
 
-# Copy requirements first (for caching)
-COPY requirements.txt ./requirements.txt
+# Install uv
+RUN pip install --no-cache-dir uv
 
-# Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy dependency files first (for caching)
+COPY pyproject.toml uv.lock ./
+
+# Install dependencies (system-wide, no venv)
+RUN uv sync --frozen --no-dev
 
 # Copy source code
 COPY src ./src
