@@ -1,18 +1,20 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, EmailStr
+from typing import Optional, List
 from datetime import datetime
 
 class FeedbackCreate(BaseModel):
-    phone: Optional[str] = None
-    message: str
+    score: int                              
+    selected_features: List[str]            
+    comments: Optional[str] = None
+    email: EmailStr
+
 
 class FeedbackResponse(BaseModel):
     id: int
-    user_id: int
-    full_name: str
     email: str
-    phone: Optional[str]
-    message: str
+    score: int
+    selected_features: List[str]
+    comments: Optional[str] = None
     created_at: datetime
 
     class Config:
