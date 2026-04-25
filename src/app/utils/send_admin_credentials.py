@@ -10,7 +10,7 @@ SMTP_EMAIL    = os.getenv("SMTP_EMAIL")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_HOST     = os.getenv("SMTP_HOST")
 SMTP_PORT     = int(os.getenv("SMTP_PORT", 465))
-PANEL_URL     = os.getenv("ADMIN_PANEL_URL", "https://admin.problempusle.site/login")
+PANEL_URL     = "https://admin.problempusle.site/login"
 
 
 def send_admin_credentials(to_email: str, full_name: str, password: str, role: str):
