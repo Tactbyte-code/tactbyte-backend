@@ -8,7 +8,7 @@ echo "Installing dependencies..."
 uv sync --frozen --no-dev
 
 echo "Reloading app..."
-pm2 reload ecosystem.config.js || pm2 start ecosystem.config.js
+pm2 reload ecosystem.config.js --update-env || pm2 start ecosystem.config.js
 
 echo "Saving PM2 state..."
 pm2 save
