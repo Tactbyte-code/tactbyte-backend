@@ -1,4 +1,4 @@
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from datetime import datetime, timezone, timedelta
@@ -18,6 +18,16 @@ from src.app.user.schema import (
 )
 from src.app.user.services import get_user_by_email
 from src.app.utils.email import send_otp_email
+from src.app.activity import services as activity_services
+
+
+def _assert_user_active(user: User) -> None:
+    """Raise 403 if the user account has been disabled by an admin."""
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been disabled. Please contact support.",
+        )
 
 
 async def check_provider(body: CheckProviderRequest, db: AsyncSession) -> dict:
@@ -31,6 +41,8 @@ async def check_provider(body: CheckProviderRequest, db: AsyncSession) -> dict:
 async def google_auth(body: GoogleSignUp, db: AsyncSession) -> User:
     user = await get_user_by_email(body.email)
     if user:
+        _assert_user_active(user)  # Block disabled returning users
+        await activity_services.ping_user(db, user.id, "login")
         return user
 
     user = User(
@@ -42,12 +54,15 @@ async def google_auth(body: GoogleSignUp, db: AsyncSession) -> User:
     )
     db.add(user)
     await db.flush()
+
+    await activity_services.ping_user(db, user.id, "register")
     return user
 
 
 async def email_signup(body: EmailSignUp, db: AsyncSession) -> User:
     user = await get_user_by_email(body.email)
     if user:
+        _assert_user_active(user)  # Block disabled users trying to re-signup
         return user
 
     user = User(
@@ -58,6 +73,8 @@ async def email_signup(body: EmailSignUp, db: AsyncSession) -> User:
     )
     db.add(user)
     await db.flush()
+
+    await activity_services.ping_user(db, user.id, "register")
     return user
 
 
@@ -75,6 +92,9 @@ async def email_login(body: EmailSignUp, db: AsyncSession) -> User:
     if not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect password")
 
+    _assert_user_active(user)  # Check AFTER credential verification to avoid leaking account status
+
+    await activity_services.ping_user(db, user.id, "login")
     return user
 
 
@@ -83,6 +103,8 @@ async def send_forgot_password_otp(body: ForgotPasswordRequest, db: AsyncSession
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="No account found with this email")
+
+    _assert_user_active(user)  # Disabled users cannot reset password
 
     await db.execute(
         delete(OTPRecord).where(
