@@ -10,17 +10,11 @@ SMTP_EMAIL    = os.getenv("SMTP_EMAIL")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_HOST     = os.getenv("SMTP_HOST")
 SMTP_PORT     = int(os.getenv("SMTP_PORT", 465))
-PANEL_URL     = "https://admin.problempusle.site/login"
 
 
-def send_admin_credentials(to_email: str, full_name: str, password: str, role: str):
-    role_label  = "Super Admin" if role == "super_admin" else "Admin"
-    role_color  = "#7c3aed"    if role == "super_admin" else "#0ea5e9"
-    role_bg     = "#f5f3ff"    if role == "super_admin" else "#f0f9ff"
-    role_border = "#ddd6fe"    if role == "super_admin" else "#bae6fd"
-
+def send_otp_email(to_email: str, name: str, otp: str):
     msg            = MIMEMultipart("alternative")
-    msg["Subject"] = "Welcome to the Admin Panel - Your Login Credentials"
+    msg["Subject"] = "Admin Panel – Your Password Reset OTP"
     msg["From"]    = SMTP_EMAIL
     msg["To"]      = to_email
 
@@ -29,11 +23,10 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Admin Credentials</title>
+  <title>Password Reset OTP</title>
   <style>
     * {{ box-sizing: border-box; }}
     body {{ margin:0; padding:0; background:#f1f5f9; }}
-    img  {{ border:0; display:block; }}
     a    {{ color:inherit; }}
 
     .wrapper {{
@@ -72,6 +65,7 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       font-size:17px; font-weight:700;
       color:#0f172a; letter-spacing:0.3px;
       vertical-align:middle;
+      margin-left:10px;
     }}
     .brand-name span {{ color:#0ea5e9; }}
 
@@ -86,7 +80,7 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       background:linear-gradient(90deg,#0ea5e9,#7c3aed);
       font-size:0; line-height:0;
     }}
-    .card-body  {{ padding:40px; }}
+    .card-body   {{ padding:40px; }}
     .card-footer {{
       background:#f8fafc;
       border-top:1px solid #f1f5f9;
@@ -106,12 +100,12 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       color:#0f172a; line-height:1.3;
     }}
     .subtext {{
-      margin:0 0 28px;
+      margin:0 0 32px;
       font-size:14px; color:#64748b; line-height:1.7;
     }}
     .divider {{
       height:1px; background:#f1f5f9;
-      margin-bottom:24px; font-size:0;
+      margin-bottom:28px; font-size:0;
     }}
     .footer-text {{
       margin:0;
@@ -122,60 +116,33 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       font-size:11px; color:#94a3b8;
     }}
 
-    .badge {{
+    .otp-wrap {{
+      text-align:center;
+      margin:0 0 32px;
+    }}
+    .otp-box {{
       display:inline-block;
-      background:{role_bg};
-      color:{role_color};
-      border:1px solid {role_border};
-      border-radius:999px;
-      font-size:11px; font-weight:700;
-      letter-spacing:1px; text-transform:uppercase;
-      padding:5px 16px;
-      margin-bottom:28px;
+      background:#f0f9ff;
+      border:1px solid #bae6fd;
+      border-radius:16px;
+      padding:24px 40px;
     }}
-
-    .field {{
-      background:#f8fafc;
-      border:1px solid #e2e8f0;
-      border-radius:12px;
-      padding:14px 18px;
-      margin-bottom:10px;
-      width:100%;
+    .otp-label {{
+      margin:0 0 10px;
+      font-size:10px; font-weight:700;
+      letter-spacing:1.5px; text-transform:uppercase;
+      color:#0ea5e9;
     }}
-    .field-pw {{
-      border-left:4px solid {role_color};
-      border-radius:0 12px 12px 0;
-      margin-bottom:28px;
-    }}
-    .field-label {{
-      margin:0 0 4px;
-      font-size:10px; font-weight:600;
-      text-transform:uppercase; letter-spacing:0.8px;
-      color:#94a3b8;
-    }}
-    .field-value {{
+    .otp-code {{
       margin:0;
-      font-size:15px; font-weight:600;
-      color:#0f172a;
+      font-size:44px; font-weight:900;
+      letter-spacing:14px;
+      color:#0369a1;
       font-family:'Courier New',Courier,monospace;
-      word-break:break-all;
     }}
-    .field-value-pw {{
-      font-size:16px; font-weight:700;
-      color:{role_color};
-      letter-spacing:2px;
-    }}
-
-    .btn-wrap {{ text-align:center; margin-bottom:24px; }}
-    .btn {{
-      display:inline-block;
-      background:linear-gradient(135deg,#0ea5e9,#7c3aed);
-      color:#ffffff !important;
-      font-size:14px; font-weight:700;
-      text-decoration:none;
-      border-radius:12px;
-      padding:14px 36px;
-      letter-spacing:0.3px;
+    .otp-expiry {{
+      margin:10px 0 0;
+      font-size:11px; color:#64748b;
     }}
 
     .warning {{
@@ -197,14 +164,12 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
     }}
 
     @media only screen and (max-width:600px) {{
-      .wrapper     {{ padding:24px 12px !important; }}
-      .card-body   {{ padding:28px 20px !important; }}
+      .wrapper   {{ padding:24px 12px !important; }}
+      .card-body {{ padding:28px 20px !important; }}
       .card-footer {{ padding:14px 20px !important; }}
-      .heading     {{ font-size:20px !important; }}
-      .btn         {{ padding:13px 24px !important; font-size:13px !important; display:block !important; text-align:center !important; }}
-      .field       {{ padding:12px 14px !important; }}
-      .field-value    {{ font-size:13px !important; }}
-      .field-value-pw {{ font-size:14px !important; letter-spacing:1px !important; }}
+      .heading   {{ font-size:20px !important; }}
+      .otp-code  {{ font-size:32px !important; letter-spacing:8px !important; }}
+      .otp-box   {{ padding:18px 24px !important; }}
     }}
   </style>
 </head>
@@ -217,9 +182,7 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
         <div class="brand-icon">
           <span class="brand-box"></span>
         </div>
-        <span class="brand-name" style="margin-left:10px;">
-          Admin<span>Panel</span>
-        </span>
+        <span class="brand-name">Admin<span>Panel</span></span>
       </div>
     </div>
 
@@ -227,40 +190,28 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       <div class="card-accent">&nbsp;</div>
 
       <div class="card-body">
-        <p class="label">Account Access</p>
-        <h1 class="heading">Welcome, {full_name}</h1>
+        <p class="label">Password Reset</p>
+        <h1 class="heading">Hi, {name} 👋</h1>
         <p class="subtext">
-          Your admin account has been created. Use the credentials below
-          to sign in and change your password on first login.
+          We received a request to reset your admin account password.
+          Use the one-time code below to continue. Do not share this code with anyone.
         </p>
-
-        <div>
-          <span class="badge">{role_label}</span>
-        </div>
 
         <div class="divider">&nbsp;</div>
 
-        <p class="label">Login Credentials</p>
-
-        <div class="field">
-          <p class="field-label">Email Address</p>
-          <p class="field-value">{to_email}</p>
-        </div>
-
-        <div class="field field-pw">
-          <p class="field-label">Temporary Password</p>
-          <p class="field-value field-value-pw">{password}</p>
-        </div>
-
-        <div class="btn-wrap">
-          <a href="{PANEL_URL}" class="btn">Sign in to Admin Panel</a>
+        <div class="otp-wrap">
+          <div class="otp-box">
+            <p class="otp-label">Your OTP Code</p>
+            <p class="otp-code">{otp}</p>
+            <p class="otp-expiry">⏱ Expires in <strong>10 minutes</strong> &nbsp;·&nbsp; Single use only</p>
+          </div>
         </div>
 
         <div class="warning">
-          <p class="warning-title">Security Notice</p>
+          <p class="warning-title">Didn't request this?</p>
           <p class="warning-body">
-            Change your password immediately after your first login.
-            Keep these credentials confidential — do not share them with anyone.
+            If you didn't request a password reset, you can safely ignore this email.
+            Your password will remain unchanged.
           </p>
         </div>
       </div>
@@ -268,7 +219,7 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
       <div class="card-footer">
         <p class="footer-text">
           This is an automated message. Please do not reply to this email.<br/>
-          If you did not expect this, contact your system administrator.
+          If you need help, contact your system administrator.
         </p>
       </div>
     </div>
@@ -295,7 +246,7 @@ def send_admin_credentials(to_email: str, full_name: str, password: str, role: s
                 server.login(SMTP_EMAIL, SMTP_PASSWORD)
                 server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
 
-        print(f"✅ Credentials email sent to {to_email}")
+        print(f"✅ OTP email sent to {to_email}")
     except Exception as e:
         print(f"❌ SMTP error: {str(e)}")
         raise e
