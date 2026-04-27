@@ -159,6 +159,12 @@ async def submit_clarification(
             status_code=400,
             detail=f"Query is not in clarifying state. Current status: {record.status}",
         )
+        
+    if(body.skip == True):
+        record.complete_step(QueryStatus.CLARIFIED)
+        await db.commit()
+        return {"id": str(record.id), "status": record.status}
+    
 
     updated_history = record.conversation_history + [
         {"role": "user", "content": body.answer}
