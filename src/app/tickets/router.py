@@ -1,7 +1,9 @@
+import asyncio
+from functools import partial
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload          # ← FIX: needed for async eager-load
+from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import datetime
 
@@ -12,24 +14,39 @@ from src.app.tickets import models, schemas
 from src.app.tickets.models import PLAN_PRIORITY_MAP, TYPE_TEAM_MAP, UserPlan, TicketType
 from src.app.teams.models import Team
 
+# ✅ FIXED: was "ticket_close_email" (wrong name → "the first argument must be callable")
+from src.app.utils.ticket_close_email import send_ticket_closed_email
+
 router = APIRouter(prefix="/tickets", tags=["Tickets"])
 
 
-# ── Helper: always eager-load replies so async session never lazy-loads ────────
+# ── Helper: always eager-load replies ─────────────────────────────────────────
 def _ticket_query():
-    """Base select that pre-loads the replies relationship.
-
-    AsyncSession does NOT support implicit lazy loading. Any query returning a
-    Ticket that will be serialised via TicketOut (which includes
-    replies: List[TicketReplyOut]) must use selectinload, otherwise SQLAlchemy
-    raises MissingGreenlet → 500 Internal Server Error.
-    """
     return select(models.Ticket).options(selectinload(models.Ticket.replies))
 
 
 async def get_team_by_slug(db: AsyncSession, slug: str):
     result = await db.execute(select(Team).where(Team.slug == slug))
     return result.scalar_one_or_none()
+
+
+async def _send_closed_email_bg(ticket: models.Ticket, team_name: str):
+    """Fire-and-forget: run blocking SMTP in a thread-pool so the route returns fast."""
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(
+            None,
+            partial(
+                send_ticket_closed_email,          # ✅ correct callable
+                ticket.user_email,
+                ticket.user_name or ticket.user_email.split("@")[0],
+                ticket.ticket_id or f"TIK{ticket.id:03d}",
+                ticket.subject or "your recent inquiry",
+                team_name,
+            ),
+        )
+    except Exception as exc:
+        print(f"⚠️  Could not send closure email for ticket {ticket.id}: {exc}")
 
 
 # ── GET /tickets/ ──────────────────────────────────────────────────────────────
@@ -42,7 +59,7 @@ async def get_tickets(
     db: AsyncSession = Depends(session),
     current_admin=Depends(require_admin),
 ):
-    query = _ticket_query()                      # ← eager-load replies
+    query = _ticket_query()
 
     if status:
         query = query.where(models.Ticket.status == status)
@@ -65,13 +82,11 @@ async def get_ticket(
     current_admin=Depends(require_admin),
 ):
     result = await db.execute(
-        _ticket_query().where(models.Ticket.id == ticket_id)   # ← eager-load replies
+        _ticket_query().where(models.Ticket.id == ticket_id)
     )
     ticket = result.scalar_one_or_none()
-
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-
     return ticket
 
 
@@ -83,7 +98,6 @@ async def create_ticket(
 ):
     data = body.model_dump()
 
-    # Priority from plan
     try:
         user_plan = UserPlan(data.get("user_plan", "free"))
     except ValueError:
@@ -92,14 +106,12 @@ async def create_ticket(
     data["priority"] = PLAN_PRIORITY_MAP.get(user_plan, models.TicketPriority.low).value
     data["user_plan"] = user_plan.value
 
-    # Team from type → validate against DB
     try:
         ticket_type = TicketType(data.get("ticket_type", "other"))
     except ValueError:
         ticket_type = TicketType.other
 
     team_slug = TYPE_TEAM_MAP.get(ticket_type, "general")
-
     team = await get_team_by_slug(db, team_slug)
     if not team:
         raise HTTPException(status_code=400, detail=f"Team '{team_slug}' not found in DB")
@@ -109,16 +121,12 @@ async def create_ticket(
 
     ticket = models.Ticket(**data)
     db.add(ticket)
-
     await db.flush()
     ticket.ticket_id = f"TIK{ticket.id:03d}"
-
     await db.commit()
 
-    # Re-fetch with eager-loaded replies instead of relying on db.refresh,
-    # which would still lazy-load the relationship on an async session.
     result = await db.execute(
-        _ticket_query().where(models.Ticket.id == ticket.id)   # ← eager-load replies
+        _ticket_query().where(models.Ticket.id == ticket.id)
     )
     return result.scalar_one()
 
@@ -132,20 +140,27 @@ async def update_status(
     current_admin=Depends(require_admin),
 ):
     result = await db.execute(
-        _ticket_query().where(models.Ticket.id == ticket_id)   # ← eager-load replies
+        _ticket_query().where(models.Ticket.id == ticket_id)
     )
     ticket = result.scalar_one_or_none()
-
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
+    previous_status = ticket.status
     ticket.status = body.status
     ticket.updated_at = datetime.utcnow()
-
     await db.commit()
-    await db.refresh(ticket)
 
-    return ticket
+    # ── Send closure email when status transitions → closed ──────────────────
+    if body.status == "closed" and previous_status != "closed":
+        team_obj  = await get_team_by_slug(db, ticket.assigned_team)
+        team_name = team_obj.name if team_obj else ticket.assigned_team.capitalize()
+        asyncio.create_task(_send_closed_email_bg(ticket, team_name))
+
+    result = await db.execute(
+        _ticket_query().where(models.Ticket.id == ticket_id)
+    )
+    return result.scalar_one()
 
 
 # ── PATCH /tickets/{ticket_id}/priority ───────────────────────────────────────
@@ -157,20 +172,20 @@ async def update_priority(
     current_admin=Depends(require_admin),
 ):
     result = await db.execute(
-        _ticket_query().where(models.Ticket.id == ticket_id)   # ← eager-load replies
+        _ticket_query().where(models.Ticket.id == ticket_id)
     )
     ticket = result.scalar_one_or_none()
-
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
     ticket.priority = body.priority
     ticket.updated_at = datetime.utcnow()
-
     await db.commit()
-    await db.refresh(ticket)
 
-    return ticket
+    result = await db.execute(
+        _ticket_query().where(models.Ticket.id == ticket_id)
+    )
+    return result.scalar_one()
 
 
 # ── POST /tickets/{ticket_id}/reply ───────────────────────────────────────────
@@ -182,10 +197,9 @@ async def reply_to_ticket(
     current_admin=Depends(require_admin),
 ):
     result = await db.execute(
-        _ticket_query().where(models.Ticket.id == ticket_id)   # ← eager-load replies
+        _ticket_query().where(models.Ticket.id == ticket_id)
     )
     ticket = result.scalar_one_or_none()
-
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
@@ -201,12 +215,10 @@ async def reply_to_ticket(
         ticket.status = models.TicketStatus.in_progress
 
     ticket.updated_at = datetime.utcnow()
-
     await db.commit()
 
-    # Re-fetch so the new reply is included in the returned replies list.
     result = await db.execute(
-        _ticket_query().where(models.Ticket.id == ticket_id)   # ← fresh eager-load
+        _ticket_query().where(models.Ticket.id == ticket_id)
     )
     return result.scalar_one()
 
@@ -220,19 +232,17 @@ async def forward_ticket(
     current_admin=Depends(require_admin),
 ):
     result = await db.execute(
-        _ticket_query().where(models.Ticket.id == ticket_id)   # ← eager-load replies
+        _ticket_query().where(models.Ticket.id == ticket_id)
     )
     ticket = result.scalar_one_or_none()
-
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
     target_team = await get_team_by_slug(db, body.to_team)
     if not target_team:
         raise HTTPException(status_code=400, detail=f"Invalid team: {body.to_team}")
-
     if body.to_team == ticket.assigned_team:
-        raise HTTPException(status_code=400, detail="Already assigned")
+        raise HTTPException(status_code=400, detail="Already assigned to this team")
 
     note_part = f"\n\nNote: {body.note}" if body.note else ""
 
@@ -254,8 +264,7 @@ async def forward_ticket(
 
     await db.commit()
 
-
     result = await db.execute(
-        _ticket_query().where(models.Ticket.id == ticket_id)   # ← fresh eager-load
+        _ticket_query().where(models.Ticket.id == ticket_id)
     )
     return result.scalar_one()

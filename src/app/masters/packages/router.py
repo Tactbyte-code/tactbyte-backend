@@ -11,7 +11,6 @@ router = APIRouter(prefix="/packages", tags=["Packages"])
 
 
 def _with_prices():
-    """Reusable selectinload options for price relationships."""
     return [
         selectinload(models.Package.monthly_price),
         selectinload(models.Package.annual_price),
@@ -51,13 +50,15 @@ async def create_package(
         name=data.name,
         description=data.description,
         features=data.features,
-        monthly_price_id=data.monthly_price_id,
-        annual_price_id=data.annual_price_id,
+        package_type=data.package_type,
+        is_free=data.is_free,
+        # If free plan, prices are always null
+        monthly_price_id=None if data.is_free else data.monthly_price_id,
+        annual_price_id=None  if data.is_free else data.annual_price_id,
     )
     db.add(pkg)
     await db.commit()
 
-    # Re-fetch with relationships loaded instead of relying on refresh
     result = await db.execute(
         select(models.Package)
         .options(*_with_prices())
@@ -82,20 +83,26 @@ async def update_package(
     if not pkg:
         raise HTTPException(status_code=404, detail="Package not found")
 
-    if data.name is not None:
-        pkg.name = data.name
-    if data.description is not None:
-        pkg.description = data.description
-    if data.features is not None:
-        pkg.features = data.features
-    if "monthly_price_id" in data.model_fields_set:
-        pkg.monthly_price_id = data.monthly_price_id
-    if "annual_price_id" in data.model_fields_set:
-        pkg.annual_price_id = data.annual_price_id
+    if data.name         is not None: pkg.name         = data.name
+    if data.description  is not None: pkg.description  = data.description
+    if data.features     is not None: pkg.features      = data.features
+    if data.package_type is not None: pkg.package_type  = data.package_type
+
+    if data.is_free is not None:
+        pkg.is_free = data.is_free
+        if data.is_free:
+            # Switching to free — wipe price FKs
+            pkg.monthly_price_id = None
+            pkg.annual_price_id  = None
+
+    if not pkg.is_free:
+        if "monthly_price_id" in data.model_fields_set:
+            pkg.monthly_price_id = data.monthly_price_id
+        if "annual_price_id" in data.model_fields_set:
+            pkg.annual_price_id = data.annual_price_id
 
     await db.commit()
 
-    # Re-fetch to get updated relationships
     result = await db.execute(
         select(models.Package)
         .options(*_with_prices())
