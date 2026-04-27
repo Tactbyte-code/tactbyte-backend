@@ -6,8 +6,9 @@ class QueryInput(BaseModel):
     query: str
     
 class ClarifyingAnswerInput(BaseModel):
-    answer: str
+    answer: Optional[str] = None
     selected_option: Optional[str] = None
+    skip: Optional[bool] = False
     
 class UpdatePostApproval(BaseModel):
     user_approved: bool
