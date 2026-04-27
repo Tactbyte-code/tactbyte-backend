@@ -91,6 +91,7 @@ dependencies = [
     "packaging==26.0",
     "paramiko==4.0.0",
     "pfzy==0.3.4",
+    "pgvector>=0.4.2",
     "prettytable==3.17.0",
     "prompt-toolkit==3.0.52",
     "propcache==0.4.1",
