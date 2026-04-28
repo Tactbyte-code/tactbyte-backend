@@ -4,8 +4,8 @@ from sqlalchemy import select
 from src.core.database import session
 from src.app.feedback.model import Feedback
 from src.app.feedback.schema import FeedbackCreate, FeedbackResponse
-from src.app.middleware.auth import require_user
 from src.app.user.model import User
+from src.app.middleware.auth import require_user
 
 router = APIRouter()
 
