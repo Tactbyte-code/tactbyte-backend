@@ -15,6 +15,7 @@ from src.app.tickets.router import router as ticket_router
 from src.app.masters.prices.router import router as price_router
 from src.app.masters.packages.router import router as packages_router
 from src.app.tickets.user_tickets import router as user_tickets_router
+
 router = APIRouter(prefix="/v1")
 
 # Admin Routes
@@ -27,6 +28,7 @@ router.include_router(ticket_router)
 router.include_router(price_router)
 router.include_router(packages_router)
 router.include_router(user_tickets_router)
+
 # Public Routes
 router.include_router(user_router)
 router.include_router(onboarding_router)
