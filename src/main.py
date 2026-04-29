@@ -11,7 +11,6 @@ from src.core.security import authX
 from src.app.user.model import User, OTPRecord          # noqa: F401
 from src.app.activity.model import UserActivity, UserActivityLog  # noqa: F401
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
@@ -39,7 +38,6 @@ app.add_middleware(
 )
 
 app.include_router(router)
-
 
 @app.get("/")
 async def read_root():
