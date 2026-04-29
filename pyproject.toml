@@ -123,6 +123,7 @@ dependencies = [
     "rignore==0.7.6",
     "runpod==1.8.2",
     "s3transfer==0.16.0",
+    "sentence-transformers>=5.4.1",
     "sentry-sdk==2.56.0",
     "shellingham==1.5.4",
     "six==1.17.0",

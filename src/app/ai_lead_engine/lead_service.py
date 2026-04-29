@@ -5,11 +5,20 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
-from src.app.ai_lead_engine.model import Lead, LeadPost
+from src.app.ai_lead_engine.model import Lead, LeadPost, CampaignHistory
 from src.app.ai_lead_engine.schema import LeadFilterParams
 from src.app.ai_lead_engine.campaign_service import get_campaign
 from src.app.user.model import User
+import aiohttp
+from urllib.parse import quote
+from sqlalchemy.dialects.postgresql import insert
+from src.app.ai_lead_engine.keyword_service import get_keywords
+import uuid
+from datetime import datetime, timezone
+import asyncio
 
+BASE_URL = "https://www.reddit.com/search.json"
+HEADERS = {"User-Agent": "tactbyte-vps leadbot/1.2"}
 
 async def get_leads(
     db: AsyncSession,
@@ -123,3 +132,103 @@ async def get_similar(
 
     rows = result.fetchall()
     return [dict(row._mapping) for row in rows]
+
+
+
+async def _fetch_reddit(session, query: str):
+    url = f"{BASE_URL}?q={query}&sort=new&t=week&limit=50&type=posts"
+
+    async with session.get(url, headers=HEADERS) as resp:
+        if resp.status != 200:
+            return []
+        data = await resp.json()
+        return data["data"]["children"]
+
+async def fetch_and_store_reddit_leads(db, user, campaign_id: int):
+    campaign = await get_campaign(db, user, campaign_id)
+    if not campaign:
+        raise ValueError("Campaign not found")
+
+    keywords = await get_keywords(db, user, campaign_id)
+    keyword_strings = [k.keyword for k in keywords if k.keyword]
+
+    if not keyword_strings:
+        return 0
+
+    history = CampaignHistory(
+        campaign_id=campaign_id,
+        action="fetch"
+    )
+    db.add(history)
+    await db.flush()
+
+    seen = set()
+    lead_rows = []
+    post_rows = []
+
+    async with aiohttp.ClientSession() as session:
+        tasks = [_fetch_reddit(session, q) for q in keyword_strings]
+        results_list = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for query, results in zip(keyword_strings, results_list):
+        if isinstance(results, Exception) or not results:
+            continue
+
+        for item in results:
+            p = item.get("data")
+            if not p:
+                continue
+
+            post_id = p.get("id")
+            if not post_id or post_id in seen:
+                continue
+
+            seen.add(post_id)
+            lead_uuid = uuid.uuid4()
+
+            lead_rows.append({
+                "id": lead_uuid,
+                "campaign_id": campaign_id,
+                "campaign_history_id": history.id,
+                "platform": "reddit",
+                "status": "new",
+                "search_keyword": query,
+            })
+
+            post_rows.append({
+                "id": uuid.uuid4(),
+                "lead_id": lead_uuid,
+                "external_id": post_id,
+                "title": p.get("title"),
+                "content": p.get("selftext"),
+                "author": p.get("author"),
+                "url": "https://reddit.com" + p.get("permalink", ""),
+                "likes": p.get("ups"),
+                "comments_count": p.get("num_comments"),
+                "post_created_at": datetime.fromtimestamp(
+                    p["created_utc"], tz=timezone.utc
+                ) if p.get("created_utc") else None,
+                "subreddit": p.get("subreddit"),
+                "subreddit_id": p.get("subreddit_id"),
+                "fetch_ok": True,
+                "fetched_at": datetime.now(timezone.utc),
+            })
+
+    if not lead_rows:
+        return 0
+
+    await db.execute(
+        insert(Lead).values(lead_rows).on_conflict_do_nothing(index_elements=["id"])
+    )
+    await db.execute(
+        insert(LeadPost).values(post_rows).on_conflict_do_nothing(index_elements=["id"])
+    )
+
+    history.snapshot = {
+        "keywords": keyword_strings,
+        "total_leads": len(lead_rows),
+    }
+
+    await db.commit()
+
+    return len(lead_rows)

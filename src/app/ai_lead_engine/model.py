@@ -17,6 +17,11 @@ class Campaign(Base):
     intent      = Column(String, nullable=True)   # "People seeking services I offer"
     prompt      = Column(Text,   nullable=True)   # custom AI reply prompt
     website     = Column(String, nullable=True)
+    service_embedding = Column(Vector(384), nullable=True)
+    service_embedding_text = Column(Text, nullable=True)
+
+    buyer_embedding = Column(Vector(384), nullable=True)
+    buyer_embedding_text = Column(Text, nullable=True)
 
     created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)

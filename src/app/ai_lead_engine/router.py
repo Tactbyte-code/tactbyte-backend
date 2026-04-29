@@ -14,6 +14,7 @@ from src.app.ai_lead_engine.schema import (
     # Campaign
     CreateCampaignBody,
     UpdateCampaignBody,
+    CampaignResponse,
     # Keywords
     GenerateKeywordsBody,
     CreateKeywordBody,
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/ai-lead-engine", tags=["Leads"])
 
 # ── Campaigns ──────────────────────────────────────────────────────────────────
 
-@router.get("/campaigns")
+@router.get("/campaigns", response_model=list[CampaignResponse])
 async def get_campaigns(
     db: AsyncSession = Depends(session),
     current_user: User = Depends(require_user),
@@ -36,7 +37,7 @@ async def get_campaigns(
     return await campaign_service.get_campaigns(db, current_user)
 
 
-@router.post("/campaigns", status_code=status.HTTP_201_CREATED)
+@router.post("/campaigns", status_code=status.HTTP_201_CREATED, response_model=CampaignResponse)
 async def create_campaign(
     body: CreateCampaignBody,
     db: AsyncSession = Depends(session),
@@ -45,7 +46,7 @@ async def create_campaign(
     return await campaign_service.create_campaign(db, current_user, body)
 
 
-@router.get("/campaigns/{campaign_id}")
+@router.get("/campaigns/{campaign_id}", response_model=CampaignResponse)
 async def get_campaign(
     campaign_id: int,
     db: AsyncSession = Depends(session),
@@ -223,3 +224,20 @@ async def delete_lead_action(
     current_user: User = Depends(require_user),
 ):
     return await action_service.delete_action(db, current_user, action_id)
+
+
+
+@router.post("/campaigns/{campaign_id}/sync-leads")
+async def sync_leads(
+    campaign_id: int,
+    db: AsyncSession = Depends(session),
+    current_user: User = Depends(require_user),
+):
+    count = await lead_service.fetch_and_store_reddit_leads(
+        db, current_user, campaign_id
+    )
+
+    return {
+        "message": "leads synced",
+        "count": count
+    }
