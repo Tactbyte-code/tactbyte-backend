@@ -4,21 +4,20 @@ from src.core.settings import settings
 from src.infra.runpod.reddit.services import reddit
 from src.infra.runpod.playstore.services import playstore
 import src.app.registry 
+from src.infra.runpod.ai_lead_engine.services import ai_lead_engine
 
 # ─── Router ───────────────────────────────────────────────────────────────────
 
 async def handler(job: dict):
     """
     RunPod serverless handler.
-    service: "reddit" | "playstore"
-    mode:    "search" | "summary"
+    service: "reddit" | "playstore" | "ai-lead-engine"
+    mode:    "search" | "summary" | "sync-leads"
     """
     inp      = job.get("input", {})
     service  = inp.get("service")
     mode     = inp.get("mode")
     query_id = inp.get("query_id")
-
-    # log.info(f"Job received | service={service} | mode={mode} | query_id={query_id}")
 
     # ── validate ──────────────────────────────────────────────────────────────
     if not service:
@@ -27,9 +26,9 @@ async def handler(job: dict):
         return {"statusCode": 400, "body": {"error": "Missing mode"}}
     if not query_id:
         return {"statusCode": 400, "body": {"error": "Missing query_id"}}
-    if service not in ("reddit", "playstore"):
+    if service not in ("reddit", "playstore", "ai-lead-engine"):
         return {"statusCode": 400, "body": {"error": f"Unknown service: {service}"}}
-    if mode not in ("search", "summary"):
+    if mode not in ("search", "summary", "sync-leads"):
         return {"statusCode": 400, "body": {"error": f"Unknown mode: {mode}"}}
 
     # ── route ─────────────────────────────────────────────────────────────────
@@ -44,6 +43,10 @@ async def handler(job: dict):
             return await playstore._handle_playstore_search(query_id)
         if mode == "summary":
             return await playstore._handle_playstore_summary(query_id)
+
+    if service == "ai-lead-engine":
+        if mode == "sync-leads":
+            return await ai_lead_engine._handle_sync_leads(campaign_history_id= query_id)
 
 
 runpod.serverless.start({"handler": handler})

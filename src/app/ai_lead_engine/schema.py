@@ -80,9 +80,6 @@ class CampaignHistoryResponse(BaseModel):
 # ── Lead Filters ───────────────────────────────────────────────────────────────
 
 class LeadFilterParams(BaseModel):
-    status: Optional[str] = None         # "new" | "replied" | "ignored" | "converted"
-    category: Optional[str] = None       # "hiring_outsourcing" | "tool_request" | etc
-    platform: Optional[str] = None       # "reddit" | "x"
     min_score: Optional[int] = None      # e.g. 8 → only score >= 8
     history_id: Optional[int] = None     # filter by scan run
 

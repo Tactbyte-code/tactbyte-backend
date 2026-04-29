@@ -4,6 +4,7 @@ from src.app.ai_lead_engine import lead_service
 from src.core.database import session
 from src.app.middleware.auth import require_user
 from src.app.user.model import User
+from typing import List, Optional
 from src.app.ai_lead_engine import (
     keyword_service,
     campaign_service,
@@ -20,6 +21,7 @@ from src.app.ai_lead_engine.schema import (
     CreateKeywordBody,
     # Leads
     LeadFilterParams,
+    LeadResponse,
     # Actions
     CreateLeadActionBody,
 )
@@ -137,26 +139,33 @@ async def generate_keywords(
 
 # ── Leads ──────────────────────────────────────────────────────────────────────
 
-@router.get("/campaigns/{campaign_id}/leads")
+
+@router.get(
+    "/campaigns/{campaign_id}/leads",
+    response_model=List[LeadResponse],
+)
 async def get_leads(
     campaign_id: int,
     db: AsyncSession = Depends(session),
-    current_user: User = Depends(require_user),
-    status: str | None = None,         # ?status=new
-    category: str | None = None,       # ?category=hiring_outsourcing
-    platform: str | None = None,       # ?platform=reddit
-    min_score: int | None = None,      # ?min_score=8
-    history_id: int | None = None,     # ?history_id=3  (filter by scan run)
+    current_user = Depends(require_user),
+
+    # Query params
+    min_score: Optional[int] = None,
+    history_id: Optional[int] = None,
 ):
     filters = LeadFilterParams(
-        status=status,
-        category=category,
-        platform=platform,
         min_score=min_score,
         history_id=history_id,
     )
-    return await lead_service.get_leads(db, current_user, campaign_id, filters)
 
+    leads = await lead_service.get_leads(
+        db,
+        current_user,
+        campaign_id,
+        filters,
+    )
+    
+    return leads
 
 @router.get("/campaigns/{campaign_id}/leads/{lead_id}")
 async def get_lead(
@@ -233,11 +242,9 @@ async def sync_leads(
     db: AsyncSession = Depends(session),
     current_user: User = Depends(require_user),
 ):
-    count = await lead_service.fetch_and_store_reddit_leads(
-        db, current_user, campaign_id
+    result = await lead_service.trigger_sync_leads(
+        campaign_id=campaign_id,
+        db=db,
+        current_user=current_user,
     )
-
-    return {
-        "message": "leads synced",
-        "count": count
-    }
+    return result

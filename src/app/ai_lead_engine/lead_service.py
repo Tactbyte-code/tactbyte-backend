@@ -9,44 +9,38 @@ from src.app.ai_lead_engine.model import Lead, LeadPost, CampaignHistory
 from src.app.ai_lead_engine.schema import LeadFilterParams
 from src.app.ai_lead_engine.campaign_service import get_campaign
 from src.app.user.model import User
-import aiohttp
-from urllib.parse import quote
-from sqlalchemy.dialects.postgresql import insert
 from src.app.ai_lead_engine.keyword_service import get_keywords
-import uuid
-from datetime import datetime, timezone
-import asyncio
-
-BASE_URL = "https://www.reddit.com/search.json"
-HEADERS = {"User-Agent": "tactbyte-vps leadbot/1.2"}
+from src.infra.runpod.client import trigger as runpod_trigger
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 async def get_leads(
     db: AsyncSession,
-    user: User,
+    user,
     campaign_id: int,
-    filters: LeadFilterParams,
+    filters,
 ) -> list[Lead]:
-    await get_campaign(db, user, campaign_id)  # ownership check
+
+    campaign = await get_campaign(db, user, campaign_id)
 
     query = (
         select(Lead)
         .where(Lead.campaign_id == campaign_id)
-        .options(selectinload(Lead.post))   # eager load post in one query
-        .order_by(Lead.created_at.desc())
+        .options(selectinload(Lead.post))  # eager load post
     )
 
-    if filters.status:
-        query = query.where(Lead.status == filters.status)
-    if filters.category:
-        query = query.where(Lead.category == filters.category)
-    if filters.platform:
-        query = query.where(Lead.platform == filters.platform)
     if filters.min_score is not None:
         query = query.where(Lead.ai_score >= filters.min_score)
+
     if filters.history_id is not None:
         query = query.where(Lead.campaign_history_id == filters.history_id)
 
+    query = query.where(Lead.status != "ignored")
+
+    query = query.order_by(Lead.ai_score.desc(), Lead.created_at.desc())
+
     result = await db.execute(query)
+
     return result.scalars().all()
 
 
@@ -134,101 +128,38 @@ async def get_similar(
     return [dict(row._mapping) for row in rows]
 
 
+async def trigger_sync_leads(
+    campaign_id: int,
+    db: AsyncSession,
+    current_user: User,
+):
 
-async def _fetch_reddit(session, query: str):
-    url = f"{BASE_URL}?q={query}&sort=new&t=week&limit=50&type=posts"
-
-    async with session.get(url, headers=HEADERS) as resp:
-        if resp.status != 200:
-            return []
-        data = await resp.json()
-        return data["data"]["children"]
-
-async def fetch_and_store_reddit_leads(db, user, campaign_id: int):
-    campaign = await get_campaign(db, user, campaign_id)
+    campaign = await get_campaign(db, current_user, campaign_id)
     if not campaign:
-        raise ValueError("Campaign not found")
+        raise HTTPException(status_code=404, detail="Campaign not found")
 
-    keywords = await get_keywords(db, user, campaign_id)
+    keywords = await get_keywords(db, current_user, campaign_id)
     keyword_strings = [k.keyword for k in keywords if k.keyword]
 
     if not keyword_strings:
-        return 0
+        raise HTTPException(status_code=400, detail="No keywords on campaign")
 
-    history = CampaignHistory(
-        campaign_id=campaign_id,
-        action="fetch"
-    )
+
+    history = CampaignHistory(campaign_id=campaign_id, action="created")
     db.add(history)
     await db.flush()
 
-    seen = set()
-    lead_rows = []
-    post_rows = []
+    job_id = await runpod_trigger(str(history.id), service="ai-lead-engine", mode="sync-leads")
 
-    async with aiohttp.ClientSession() as session:
-        tasks = [_fetch_reddit(session, q) for q in keyword_strings]
-        results_list = await asyncio.gather(*tasks, return_exceptions=True)
-
-    for query, results in zip(keyword_strings, results_list):
-        if isinstance(results, Exception) or not results:
-            continue
-
-        for item in results:
-            p = item.get("data")
-            if not p:
-                continue
-
-            post_id = p.get("id")
-            if not post_id or post_id in seen:
-                continue
-
-            seen.add(post_id)
-            lead_uuid = uuid.uuid4()
-
-            lead_rows.append({
-                "id": lead_uuid,
-                "campaign_id": campaign_id,
-                "campaign_history_id": history.id,
-                "platform": "reddit",
-                "status": "new",
-                "search_keyword": query,
-            })
-
-            post_rows.append({
-                "id": uuid.uuid4(),
-                "lead_id": lead_uuid,
-                "external_id": post_id,
-                "title": p.get("title"),
-                "content": p.get("selftext"),
-                "author": p.get("author"),
-                "url": "https://reddit.com" + p.get("permalink", ""),
-                "likes": p.get("ups"),
-                "comments_count": p.get("num_comments"),
-                "post_created_at": datetime.fromtimestamp(
-                    p["created_utc"], tz=timezone.utc
-                ) if p.get("created_utc") else None,
-                "subreddit": p.get("subreddit"),
-                "subreddit_id": p.get("subreddit_id"),
-                "fetch_ok": True,
-                "fetched_at": datetime.now(timezone.utc),
-            })
-
-    if not lead_rows:
-        return 0
-
-    await db.execute(
-        insert(Lead).values(lead_rows).on_conflict_do_nothing(index_elements=["id"])
-    )
-    await db.execute(
-        insert(LeadPost).values(post_rows).on_conflict_do_nothing(index_elements=["id"])
-    )
-
-    history.snapshot = {
-        "keywords": keyword_strings,
-        "total_leads": len(lead_rows),
-    }
+    history.runpod_job_id  = job_id
 
     await db.commit()
 
-    return len(lead_rows)
+    print(f"Lead sync triggered campaign_id={campaign.id}, campaign_history_id={history.id}, runpod_job_id={job_id}")
+    
+    return {
+        "campaign_id":   campaign_id,
+        "campaign_history_id": history.id,
+        "status":        history.action,
+        "runpod_job_id": job_id,
+    }

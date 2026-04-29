@@ -1,14 +1,11 @@
 # src/app/ai_lead_engine/campaign_service.py
 
-from sqlalchemy import select, update, delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 from src.app.ai_lead_engine.model import Campaign, CampaignHistory, Keyword
 from src.app.ai_lead_engine.schema import CreateCampaignBody, UpdateCampaignBody
 from src.app.user.model import User
-from datetime import datetime, timezone
-from src.app.ai_lead_engine.embeding import apply_campaign_embedding
-
 
 async def get_campaigns(db: AsyncSession, user: User) -> list[Campaign]:
     result = await db.execute(
@@ -39,8 +36,6 @@ async def create_campaign(db: AsyncSession, user: User, body: CreateCampaignBody
     db.add(campaign)
     await db.flush()
     
-    apply_campaign_embedding(campaign)
-    
     for kw in body.keywords or []:
         keyword = Keyword(
             keyword=kw.keyword,
@@ -49,13 +44,6 @@ async def create_campaign(db: AsyncSession, user: User, body: CreateCampaignBody
         )
         db.add(keyword)
 
-    # Record creation in history
-    history = CampaignHistory(
-        campaign_id=campaign.id,
-        action="created",
-        snapshot=_campaign_snapshot(campaign),
-    )
-    db.add(history)
     await db.commit()
     await db.refresh(campaign)
     return campaign

@@ -78,3 +78,11 @@ def apply_campaign_embedding(campaign):
     campaign.embedded_at = data["embedded_at"]
 
     return campaign
+
+
+def encode_lead_text(title: str, content: str):
+    text = f"{title or ''}\n{content or ''}".strip()
+    if not text:
+        return None, None
+    vector = _model.encode(text).tolist()
+    return vector, text

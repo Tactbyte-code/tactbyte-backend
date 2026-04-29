@@ -54,6 +54,7 @@ class CampaignHistory(Base):
     action      = Column(String,  nullable=False)   # "created" | "updated" | "deleted"
     snapshot    = Column(JSONB,   nullable=True)    # full campaign state at time of change
     changed_fields = Column(JSONB, nullable=True)   # {"name": {"old": "X", "new": "Y"}}
+    runpod_job_id        = Column(String,  nullable=True)
 
     created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
