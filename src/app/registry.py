@@ -11,3 +11,4 @@ from src.app.teams.models import Team
 from src.app.tickets.models import TicketStatus, TicketPriority, TicketType, UserPlan, Ticket, TicketReply
 from src.app.masters.prices.models import Price
 from src.app.masters.packages.models import Package
+from src.app.ai_lead_engine.model import Campaign, CampaignHistory, Keyword, Lead, LeadPost, LeadAction
