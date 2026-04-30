@@ -9,6 +9,7 @@ from src.app.playstore.router import router as playstore_router
 from src.app.playstore.admin_router import router as playstore_admin_router
 from src.app.feedback.router import router as feedback_router
 from src.app.contact.router import router as contact_router
+from src.app.payment.router import router as payment_router
 from src.app.activity.router import router as activity_routers
 from src.app.teams.router import router as teams_router
 from src.app.tickets.router import router as ticket_router
@@ -29,6 +30,7 @@ router.include_router(ticket_router)
 router.include_router(price_router)
 router.include_router(packages_router)
 router.include_router(user_tickets_router)
+
 # Public Routes
 router.include_router(user_router)
 router.include_router(onboarding_router)
@@ -38,3 +40,4 @@ router.include_router(playstore_router)
 router.include_router(feedback_router)
 router.include_router(contact_router)
 router.include_router(ai_lead_engine_router)
+router.include_router(payment_router)
