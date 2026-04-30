@@ -598,7 +598,7 @@ def send_ticket_closed_email(
     <div class="brand">
       <div style="display:inline-flex;align-items:center;">
         <div class="brand-icon"><span class="brand-box"></span></div>
-        <span class="brand-name" style="margin-left:10px;">AI<span>ProblemFinder</span></span>
+        <span class="brand-name" style="margin-left:10px;">ProblemPulse</span>
       </div>
     </div>
 
@@ -695,7 +695,7 @@ def send_ticket_closed_email(
       <div class="card-footer">
         <p class="footer-text">
           This message was sent to <strong>{to_email}</strong> because you have an active account.<br/>
-          &copy; 2025 AIProblemFinder &mdash; All rights reserved.
+          &copy; 2026 ProblemPulseAi &mdash; All rights reserved.
         </p>
       </div>
 
