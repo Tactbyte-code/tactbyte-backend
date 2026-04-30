@@ -16,6 +16,7 @@ from src.app.tickets.router import router as ticket_router
 from src.app.masters.prices.router import router as price_router
 from src.app.masters.packages.router import router as packages_router
 from src.app.tickets.user_tickets import router as user_tickets_router
+from src.app.ai_lead_engine.router import router as ai_lead_engine_router
 
 router = APIRouter(prefix="/v1")
 
@@ -38,4 +39,5 @@ router.include_router(user_plan_router)
 router.include_router(playstore_router)
 router.include_router(feedback_router)
 router.include_router(contact_router)
+router.include_router(ai_lead_engine_router)
 router.include_router(payment_router)

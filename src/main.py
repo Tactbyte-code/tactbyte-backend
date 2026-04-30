@@ -13,10 +13,6 @@ from src.app.activity.model import UserActivity, UserActivityLog  # noqa: F401
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
     initialize_firebase()
     yield
     await engine.dispose()

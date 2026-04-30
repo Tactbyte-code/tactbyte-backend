@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     DISCOVERY_SERVING_CONFIG: str
     DISCOVERY_PAGE_SIZE: str
     GOOGLE_APPLICATION_CREDENTIALS_JSON: str
+    
+    LEAD_SYNC_INTERVAL_HOURS: int = 12
 
     # CORS
     ALLOWED_ORIGINS: str = ""
