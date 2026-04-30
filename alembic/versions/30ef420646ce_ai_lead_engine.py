@@ -127,7 +127,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_lead_posts_id'), 'lead_posts', ['id'], unique=False)
     op.create_index(op.f('ix_lead_posts_lead_id'), 'lead_posts', ['lead_id'], unique=False)
-    op.drop_table('feedbacks')
     # ### end Alembic commands ###
 
 
