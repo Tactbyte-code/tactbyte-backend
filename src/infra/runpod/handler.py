@@ -46,7 +46,7 @@ async def handler(job: dict):
 
     if service == "ai-lead-engine":
         if mode == "sync-leads":
-            return await ai_lead_engine._handle_sync_leads(campaign_history_id= query_id)
+            return await ai_lead_engine._handle_sync_leads(query_id)
 
 
 runpod.serverless.start({"handler": handler})

@@ -23,18 +23,25 @@ This represents the type of service being offered.
 
 def build_buyer_text(campaign) -> str:
     return f"""
-A person is looking to hire help for:
+A person who wants to hire or pay someone for:
 {campaign.description or ""}
 
-They may:
-- look for someone to hire
-- ask for recommendations
-- discuss budget or cost
+Their intent:
+{campaign.intent or ""}
 
-They are NOT service providers.
+Strong buying signals:
+- Asking how much something costs
+- Looking for someone to hire or recommend
+- Has a problem and needs someone to solve it
+- Mentions budget, timeline, or project scope
+- Asking for agency, freelancer, or service recommendations
+- Frustrated with current solution and wants to replace it
 
-Goal:
-Find posts written by potential buyers.
+These are NOT buyers:
+- Professionals discussing their own work in this field
+- People learning or asking how to do it themselves
+- Job seekers looking for work
+- People venting without intent to hire
 """.strip()
 
 

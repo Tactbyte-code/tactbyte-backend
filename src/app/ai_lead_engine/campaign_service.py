@@ -6,21 +6,43 @@ from fastapi import HTTPException, status
 from src.app.ai_lead_engine.model import Campaign, CampaignHistory, Keyword
 from src.app.ai_lead_engine.schema import CreateCampaignBody, UpdateCampaignBody
 from src.app.user.model import User
+from src.core.settings import settings
+from datetime import timedelta
 
-async def get_campaigns(db: AsyncSession, user: User) -> list[Campaign]:
+async def get_campaigns(db: AsyncSession, user: User):
     result = await db.execute(
-        select(Campaign).where(Campaign.user_id == user.id).order_by(Campaign.created_at.desc())
+        select(Campaign)
+        .where(Campaign.user_id == user.id)
+        .order_by(Campaign.created_at.desc())
     )
-    return result.scalars().all()
+    campaigns = result.scalars().all()
+
+    for c in campaigns:
+        if c.last_synced_at:
+            c.next_allowed_at = c.last_synced_at + timedelta(
+                hours=settings.LEAD_SYNC_INTERVAL_HOURS
+            )
+        else:
+            c.next_allowed_at = None
+
+    return campaigns
 
 
-async def get_campaign(db: AsyncSession, user: User, campaign_id: int) -> Campaign:
+async def get_campaign(db: AsyncSession, user: User, campaign_id: int):
     result = await db.execute(
         select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == user.id)
     )
     campaign = result.scalar_one_or_none()
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    
+    if campaign.last_synced_at:
+        campaign.next_allowed_at = campaign.last_synced_at + timedelta(
+            hours=settings.LEAD_SYNC_INTERVAL_HOURS
+        )
+    else:
+        campaign.next_allowed_at = None
+        
     return campaign
 
 

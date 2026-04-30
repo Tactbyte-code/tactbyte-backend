@@ -60,6 +60,9 @@ class CampaignResponse(BaseModel):
     website: Optional[str]
     created_at: datetime
     updated_at: datetime
+    
+    last_synced_at: Optional[datetime]
+    next_allowed_at: Optional[datetime]
 
     model_config = {"from_attributes": True}
 

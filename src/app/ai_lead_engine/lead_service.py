@@ -11,36 +11,38 @@ from src.app.ai_lead_engine.campaign_service import get_campaign
 from src.app.user.model import User
 from src.app.ai_lead_engine.keyword_service import get_keywords
 from src.infra.runpod.client import trigger as runpod_trigger
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
+from datetime import datetime, timezone, timedelta
+from src.core.settings import settings
 
-async def get_leads(
-    db: AsyncSession,
-    user,
-    campaign_id: int,
-    filters,
-) -> list[Lead]:
 
-    campaign = await get_campaign(db, user, campaign_id)
+async def get_leads(db, user, campaign_id, filters):
+    await get_campaign(db, user, campaign_id)
+
+    # Subquery: get the minimum lead ID per unique post title
+    unique_post_subquery = (
+        select(func.min(Lead.id))
+        .join(Lead.post)
+        .where(Lead.campaign_id == campaign_id)
+        .where(Lead.ai_score > 0)
+        .where(Lead.status != "ignored")
+        .group_by(LeadPost.title)
+        .scalar_subquery()
+    )
 
     query = (
         select(Lead)
+        .join(Lead.post)
         .where(Lead.campaign_id == campaign_id)
-        .options(selectinload(Lead.post))  # eager load post
+        .where(Lead.ai_score > 0)
+        .where(Lead.status != "ignored")
+        .options(selectinload(Lead.post))
+        .distinct(LeadPost.title)                                          # DISTINCT ON (title)
+        .order_by(LeadPost.title, Lead.ai_score.desc(), Lead.created_at.desc())
     )
 
-    if filters.min_score is not None:
-        query = query.where(Lead.ai_score >= filters.min_score)
-
-    if filters.history_id is not None:
-        query = query.where(Lead.campaign_history_id == filters.history_id)
-
-    query = query.where(Lead.status != "ignored")
-
-    query = query.order_by(Lead.ai_score.desc(), Lead.created_at.desc())
-
     result = await db.execute(query)
-
     return result.scalars().all()
 
 
@@ -137,6 +139,14 @@ async def trigger_sync_leads(
     campaign = await get_campaign(db, current_user, campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
+    
+    if campaign.last_synced_at:
+        next_allowed = campaign.last_synced_at + timedelta(hours=settings.LEAD_SYNC_INTERVAL_HOURS)
+        if datetime.now(timezone.utc) < next_allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Sync allowed after {next_allowed.strftime('%d-%m-%y %H:%M')}"
+            )
 
     keywords = await get_keywords(db, current_user, campaign_id)
     keyword_strings = [k.keyword for k in keywords if k.keyword]
@@ -152,7 +162,8 @@ async def trigger_sync_leads(
     job_id = await runpod_trigger(str(history.id), service="ai-lead-engine", mode="sync-leads")
 
     history.runpod_job_id  = job_id
-
+    campaign.last_synced_at = datetime.now(timezone.utc)
+    
     await db.commit()
 
     print(f"Lead sync triggered campaign_id={campaign.id}, campaign_history_id={history.id}, runpod_job_id={job_id}")

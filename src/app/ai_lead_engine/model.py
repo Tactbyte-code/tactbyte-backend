@@ -25,6 +25,7 @@ class Campaign(Base):
 
     created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     # Relationships
     keywords         = relationship("Keyword",         back_populates="campaign", cascade="all, delete-orphan")
@@ -76,6 +77,7 @@ class Lead(Base):
 
     # ── Scoring ───────────────────────────────────────────────────
     ai_score            = Column(Integer,     nullable=True)   # 1–10
+    vector_score        = Column(Float, nullable=True)   # stage 3 weighted final score
     intent              = Column(Text,        nullable=True)   # AI-extracted intent summary
     category            = Column(String(100), nullable=True)   # "hiring_outsourcing" | "tool_request" | etc
     budget_signal       = Column(String(255), nullable=True)   # extracted budget string e.g. "$80/hr", "$15k-$20k"
