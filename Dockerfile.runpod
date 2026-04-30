@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 
 # Install dependencies (system-wide, no venv)
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --system
 
 # Copy source code
 COPY src ./src

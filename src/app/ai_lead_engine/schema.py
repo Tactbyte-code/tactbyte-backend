@@ -61,8 +61,8 @@ class CampaignResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     
-    last_synced_at: Optional[datetime]
-    next_allowed_at: Optional[datetime]
+    last_synced_at: Optional[datetime]  = None
+    next_allowed_at: Optional[datetime]  = None
 
     model_config = {"from_attributes": True}
 
