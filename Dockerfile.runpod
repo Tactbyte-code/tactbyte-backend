@@ -31,4 +31,4 @@ RUN uv sync --frozen --no-dev
 COPY src ./src
 
 # Run worker
-CMD ["python", "-m", "src.infra.runpod.handler"]
+CMD ["/app/.venv/bin/python", "-m", "src.infra.runpod.handler"]
