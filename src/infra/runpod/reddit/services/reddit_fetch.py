@@ -38,7 +38,7 @@ MAX_RETRIES    = 3
 BACKOFF_BASE_S = 1.0
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; RedditIntelBot/1.2)",
+    "User-Agent": "TactbyteServerless, reddit-bot/1.0.5",
     "Accept":          "application/json, text/html, */*",
     "Accept-Language": "en-US,en;q=0.9",
 }
