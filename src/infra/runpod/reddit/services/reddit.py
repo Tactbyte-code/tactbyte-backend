@@ -6,7 +6,7 @@ from src.infra.runpod.llm import get_client
 from src.app.reddit.model import RedditQuery, QueryStatus, FailureReason, RedditQueryContext, RedditSummary, RedditPost
 from src.infra.runpod.reddit.services.query_generator import generate_queries
 from src.infra.runpod.reddit.services.summarizer import run_summarizer
-from src.infra.runpod.reddit.services.reddit_fetch import fetch_reddit_posts
+from src.infra.runpod.reddit.services.rapidapi_reddit_fetch import fetch_reddit_posts
 from src.infra.runpod.reddit.services.vertex_search import run_vertex_search
 from sqlalchemy import select
 

@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # SARVAM
     SARVAM_API_KEY: str
 
+    RAPIDAPI_KEY: str
+
     # Google Vertex AI
     DISCOVERY_PROJECT_ID: str
     DISCOVERY_LOCATION: str

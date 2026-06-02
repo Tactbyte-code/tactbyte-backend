@@ -136,6 +136,9 @@ async def run_vertex_search(
         ]
     """
     queries: list[str] = rich_context.get("queries", [])
+
+    # TEMP: limit Vertex Search to a single query
+    queries = queries[:1]
     if not queries:
         log.warn("[GATE 1] No queries in rich_context — skipping Vertex search.")
         return []
