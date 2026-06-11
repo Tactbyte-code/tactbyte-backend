@@ -25,7 +25,7 @@ async def get_workspace_or_404(id: int, user_id, db: AsyncSession) -> Workspace:
 
 # ─── workspaces ─────────────────────────────────────────────────────────────
 
-@router.get("/")
+@router.get("")
 async def get_workspaces(
     db: AsyncSession = Depends(session),
     current_user: User = Depends(require_user),
@@ -47,7 +47,7 @@ async def get_workspace(
     return await get_workspace_or_404(id, current_user.id, db)
 
 
-@router.post("/")
+@router.post("")
 async def create_workspace(
     body: CreateWorkspace,
     db: AsyncSession = Depends(session),
