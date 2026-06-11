@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.ai_workspace.model import Source, Workspace, ChatSession, ChatMessage
-from src.app.ai_workspace.schema import CreateWorkspace, CreateChatSession, SendMessage
+from src.app.ai_workspace.schema import CreateWorkspace, CreateChatSession, SendMessage, SourceUploadRequest
 from src.core.database import session
 from src.app.middleware.auth import require_user
 from src.app.user.model import User
+from src.core.supabase import supabase
 
 router = APIRouter(prefix="/ai-workspace", tags=["AI Workspace"])
 
@@ -77,33 +78,69 @@ async def get_sources(
     )
     return query.scalars().all()
 
-
-@router.post("/{id}/sources")
-async def upload_source(
+# 1. request upload URL
+@router.post("/{id}/sources/upload-url")
+async def get_upload_url(
     id: int,
-    file: UploadFile = File(...),
+    body: SourceUploadRequest,
     db: AsyncSession = Depends(session),
     current_user: User = Depends(require_user),
 ):
     await get_workspace_or_404(id, current_user.id, db)
 
-    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "unknown"
-
+    # create source record in pending state
     record = Source(
         workspace_id=id,
-        filename=file.filename,
-        source_type=ext,
+        filename=body.filename,
+        source_type=body.filename.rsplit(".", 1)[-1].lower(),
         status="pending",
     )
     db.add(record)
     await db.commit()
     await db.refresh(record)
 
+    # generate supabase signed upload url
+    supabase_key = f"workspaces/{id}/sources/{record.id}/{body.filename}"
+    signed = supabase.storage.from_("sources").create_signed_upload_url(supabase_key)
+
+    record.s3_key = supabase_key
+    await db.commit()
+
+    return {
+        "source": record,
+        "upload_url": signed["signed_url"],
+        "token": signed["token"],
+        "path": signed["path"],
+    }
+
+
+# 2. confirm upload complete
+@router.post("/{id}/sources/{source_id}/confirm")
+async def confirm_upload(
+    id: int,
+    source_id: int,
+    db: AsyncSession = Depends(session),
+    current_user: User = Depends(require_user),
+):
+    await get_workspace_or_404(id, current_user.id, db)
+
+    query = await db.execute(
+        select(Source).where(Source.id == source_id, Source.workspace_id == id)
+    )
+    source = query.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    source.status = "ready"
+    await db.commit()
+    await db.refresh(source)
+
     # TODO: kick off background processing job here
 
-    return record
+    return source
 
 
+# 3. delete
 @router.delete("/{id}/sources/{source_id}")
 async def delete_source(
     id: int,

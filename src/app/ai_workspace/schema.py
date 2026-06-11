@@ -11,3 +11,6 @@ class CreateChatSession(BaseModel):
 
 class SendMessage(BaseModel):
     message: str
+
+class SourceUploadRequest(BaseModel):
+    filename: str
