@@ -8,3 +8,6 @@ class CreateWorkspace(BaseModel):
 
 class CreateChatSession(BaseModel):
     title: Optional[str] = "New chat"
+
+class SendMessage(BaseModel):
+    message: str

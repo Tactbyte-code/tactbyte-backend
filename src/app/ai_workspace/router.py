@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.app.ai_workspace.model import Source, Workspace, ChatSession
-from src.app.ai_workspace.schema import CreateWorkspace, CreateChatSession
+from src.app.ai_workspace.model import Source, Workspace, ChatSession, ChatMessage
+from src.app.ai_workspace.schema import CreateWorkspace, CreateChatSession, SendMessage
 from src.core.database import session
 from src.app.middleware.auth import require_user
 from src.app.user.model import User
@@ -171,3 +171,67 @@ async def delete_session(
     await db.delete(s)
     await db.commit()
     return {"deleted": True}
+
+
+@router.get("/{id}/sessions/{session_id}/messages")
+async def get_messages(
+    id: int,
+    session_id: int,
+    db: AsyncSession = Depends(session),
+    current_user: User = Depends(require_user),
+):
+    await get_workspace_or_404(id, current_user.id, db)
+    
+    query = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.asc())
+    )
+    return query.scalars().all()
+
+@router.post("/{id}/sessions/{session_id}/messages")
+async def send_message(
+    id: int,
+    session_id: int,
+    body: SendMessage,
+    db: AsyncSession = Depends(session),
+    current_user: User = Depends(require_user),
+):
+    await get_workspace_or_404(id, current_user.id, db)
+
+    # 1. save user message
+    user_msg = ChatMessage(
+        session_id=session_id,
+        role="user",
+        content=body.message,
+    )
+    db.add(user_msg)
+    await db.commit()
+
+    # 2. fetch sources for context
+    sources = await db.execute(
+        select(Source).where(Source.workspace_id == id, Source.status == "ready")
+    )
+    sources = sources.scalars().all()
+
+    # 3. call LLM (Sarvam or whatever)
+    # answer, citations = await run_rag(body.message, sources)
+    answer = "Hello i am uday"
+    citations = {
+        "source_id": "12",
+        "filename": "test_file.pdf",
+        "excerpt": "nice to meet you"
+    }
+
+    # 4. save assistant message
+    assistant_msg = ChatMessage(
+        session_id=session_id,
+        role="assistant",
+        content=answer,
+        citations=citations,  # JSONB — list of {source_id, filename, excerpt}
+    )
+    db.add(assistant_msg)
+    await db.commit()
+    await db.refresh(assistant_msg)
+
+    return assistant_msg
