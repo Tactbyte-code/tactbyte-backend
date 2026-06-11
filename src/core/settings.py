@@ -30,6 +30,10 @@ class Settings(BaseSettings):
 
     RAPIDAPI_KEY: str
 
+    # S3 file storage
+    S3_ACCESS_KEY_ID: str
+    S3_SECRET_ACCESS_KEY: str
+
     # Google Vertex AI
     DISCOVERY_PROJECT_ID: str
     DISCOVERY_LOCATION: str
