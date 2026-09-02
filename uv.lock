@@ -501,37 +501,37 @@ wheels = [
 
 [package.optional-dependencies]
 cublas = [
-    { name = "nvidia-cublas", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cublas" },
 ]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-runtime" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cufft" },
 ]
 cufile = [
-    { name = "nvidia-cufile", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cufile" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-cupti" },
 ]
 curand = [
-    { name = "nvidia-curand", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-curand" },
 ]
 cusolver = [
-    { name = "nvidia-cusolver", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cusolver" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cusparse" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-nvjitlink" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-nvrtc" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-nvtx" },
 ]
 
 [[package]]
@@ -2554,7 +2554,6 @@ dependencies = [
     { name = "rignore" },
     { name = "runpod" },
     { name = "s3transfer" },
-    { name = "sentence-transformers" },
     { name = "sentry-sdk" },
     { name = "shellingham" },
     { name = "six" },
@@ -2581,6 +2580,11 @@ dependencies = [
     { name = "xxhash" },
     { name = "yarl" },
     { name = "zstandard" },
+]
+
+[package.optional-dependencies]
+ml = [
+    { name = "sentence-transformers" },
 ]
 
 [package.metadata]
@@ -2704,7 +2708,7 @@ requires-dist = [
     { name = "rignore", specifier = "==0.7.6" },
     { name = "runpod", specifier = "==1.8.2" },
     { name = "s3transfer", specifier = "==0.16.0" },
-    { name = "sentence-transformers", specifier = ">=5.4.1" },
+    { name = "sentence-transformers", marker = "extra == 'ml'", specifier = ">=5.4.1" },
     { name = "sentry-sdk", specifier = "==2.56.0" },
     { name = "shellingham", specifier = "==1.5.4" },
     { name = "six", specifier = "==1.17.0" },
@@ -2732,6 +2736,7 @@ requires-dist = [
     { name = "yarl", specifier = "==1.23.0" },
     { name = "zstandard", specifier = "==0.25.0" },
 ]
+provides-extras = ["ml"]
 
 [[package]]
 name = "tenacity"
