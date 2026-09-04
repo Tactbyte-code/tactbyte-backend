@@ -15,7 +15,6 @@ from src.infra.runpod.client import trigger as runpod_trigger
 
 logger = logging.getLogger(__name__)
 
-
 async def create_query(body: QueryInput, db: AsyncSession, current_user: User) -> dict:
     result = await db.execute(
         select(Onboarding).where(Onboarding.user_id == current_user.id)

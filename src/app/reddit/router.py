@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import session
-from src.app.middleware.auth import require_user, require_admin
+from src.app.middleware.auth import require_user, require_admin 
 from src.app.user.model import User
 from src.app.reddit.schema import QueryInput, ClarifyingAnswerInput, UpdatePostApproval
 from src.app.reddit import services

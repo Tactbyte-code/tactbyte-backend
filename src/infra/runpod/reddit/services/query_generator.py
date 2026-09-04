@@ -272,6 +272,10 @@ def _call_part(client, prompt: str, key: str, log) -> dict | None:
             log(f"[Query Generator: Warning] LLM call error (attempt {attempt + 1}) for '{key}': {e}")
             continue
 
+        if not raw:
+            log(f"[Query Generator: Warning] Empty response (attempt {attempt + 1}) for '{key}'")
+            continue
+
         # Strip markdown fences and think blocks
         clean = re.sub(r"```json\s*|```\s*", "", raw).strip()
         clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL).strip()
@@ -333,7 +337,7 @@ def generate_queries(
 
     # ── Resolve client ────────────────────────────────────────────────────────
     if client is None:
-        from llm_client import get_client
+        from src.infra.runpod.llm import get_client
         client = get_client(settings=settings)
 
     is_mock = client.provider == "mock"
@@ -437,7 +441,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output",   default=None)
     args = parser.parse_args()
 
-    from llm_client import get_client
+    from src.infra.runpod.llm import get_client
     _client = get_client(provider=args.provider, model=args.model)
 
     result = generate_queries(args.query, client=_client)
