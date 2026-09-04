@@ -17,17 +17,19 @@ CALL STRATEGY (prevents truncation, guarantees schema compliance):
 
 RELIABILITY NOTE:
   client.call() can legitimately hand back an empty string with no exception
-  raised (provider-side content filter, truncated/cold-start response, a
-  transient network blip, etc). Every LLM call in this module goes through
-  `_call_json()`, which retries with backoff and parses only once a
-  non-empty response comes back — so a single flaky call (most commonly the
-  very first one, Call 0) no longer aborts the entire summarization.
+  raised (provider-side content filter, truncated/cold-start response, an
+  input too long for the model's context window, a transient network blip,
+  etc). Every LLM call in this module goes through `_call_part()` (same
+  pattern as query_generator.py's part-caller): it retries on call errors,
+  empty responses, and JSON parse failures, and returns None once retries
+  are exhausted instead of raising. Callers decide the fallback — so a
+  single call that keeps failing (e.g. theme discovery on an oversized
+  prompt) degrades that one section instead of aborting the whole run.
 ─────────────────────────────────────────────────────────────────────────────
 """
 from __future__ import annotations
 import json
 import re
-import time
 from datetime import datetime, timezone
 from typing import Any
 import runpod
@@ -46,9 +48,8 @@ MAX_COMMENTS_PER_POST  = 10
 # silent content-filter blocks (which surface here as an empty response).
 MAX_CONTEXT_CHARS = 60_000
 
-# Retry policy for every LLM call in this module.
-LLM_MAX_RETRIES     = 3      # total attempts per call
-LLM_RETRY_BACKOFF_S = 2.0    # base seconds, doubles each retry
+# Retry policy for every LLM call in this module (mirrors query_generator.py).
+LLM_MAX_RETRIES = 3   # total attempts per call before giving up on that part
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -171,56 +172,74 @@ def _build_context(posts: list[dict[str, Any]]) -> tuple[str, int]:
     return context, total_comments
 
 # ---------------------------------------------------------------------------
-# JSON parser
+# Part caller — same pattern as query_generator.py's _call_part()
 # ---------------------------------------------------------------------------
-def _parse_json(raw: str | None, label: str) -> dict:
-    if not raw:
-        raise RuntimeError(f"[{label}] LLM returned empty response")
-    clean = re.sub(r"```json\s*|```\s*", "", raw).strip()
-    clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL).strip()
-    if not clean:
-        raise RuntimeError(f"[{label}] LLM response was empty after stripping fences/think-blocks")
-    try:
-        return json.loads(clean)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"[{label}] JSON parse error: {e}\nRaw (first 400):\n{clean[:400]}")
-
-# ---------------------------------------------------------------------------
-# Resilient LLM call — retries transient empty/malformed responses
-# ---------------------------------------------------------------------------
-def _call_json(
+def _call_part(
     client,
-    system: str,
     prompt: str,
+    key: str | None,
     label: str,
     max_retries: int = LLM_MAX_RETRIES,
-) -> dict:
+):
     """
-    Calls client.call(system, prompt), parses the JSON response, and retries
-    with backoff on empty responses or JSON parse failures. client.call() can
-    legitimately return "" with no exception (content filter, truncated
-    response, transient blip) — most exposed on the very first call of a run,
-    so every call site in this module goes through here instead of calling
-    client.call()/_parse_json() directly.
+    Call the LLM for one JSON section. Retries on call errors, empty
+    responses, and JSON parse failures.
+
+    - key=None   → returns the whole parsed dict on success.
+    - key="..."  → returns data[key] if present; on the final attempt, if the
+                   key is still missing, returns the parsed dict as a
+                   best-effort fallback instead of discarding a response the
+                   model *did* manage to produce.
+    - Returns None once every attempt has failed — the caller decides what
+      fallback to use, instead of this function raising and killing the run.
     """
-    last_err: Exception | None = None
+    last_data = None
     for attempt in range(1, max_retries + 1):
         try:
-            raw = client.call(system, prompt)
-            raw_len = len(raw) if raw else 0
-            if not raw:
-                raise RuntimeError(
-                    f"[{label}] LLM returned empty response "
-                    f"(attempt {attempt}/{max_retries}, prompt_chars={len(prompt)})"
-                )
-            return _parse_json(raw, label)
+            raw = client.call(_SYSTEM, prompt)
         except Exception as e:
-            last_err = e
-            log.warn(f"[SUMMARIZER] {label} attempt {attempt}/{max_retries} failed: {e}")
-            if attempt < max_retries:
-                time.sleep(LLM_RETRY_BACKOFF_S * attempt)
+            log.warn(f"[SUMMARIZER] {label} — LLM call error (attempt {attempt}/{max_retries}): {e}")
+            continue
 
-    raise RuntimeError(f"[{label}] failed after {max_retries} attempts: {last_err}")
+        if not raw:
+            log.warn(
+                f"[SUMMARIZER] {label} — empty response "
+                f"(attempt {attempt}/{max_retries}, prompt_chars={len(prompt)})"
+            )
+            continue
+
+        clean = re.sub(r"```json\s*|```\s*", "", raw).strip()
+        clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL).strip()
+        if not clean:
+            log.warn(f"[SUMMARIZER] {label} — empty after stripping fences (attempt {attempt}/{max_retries})")
+            continue
+
+        try:
+            data = json.loads(clean)
+        except json.JSONDecodeError as e:
+            log.warn(
+                f"[SUMMARIZER] {label} — JSON parse error (attempt {attempt}/{max_retries}): {e}\n"
+                f"Raw (first 400): {clean[:400]}"
+            )
+            continue
+
+        if key is None:
+            return data
+
+        if isinstance(data, dict) and key in data:
+            return data[key]
+
+        last_data = data
+        if attempt < max_retries:
+            log.warn(f"[SUMMARIZER] {label} — response missing '{key}' (attempt {attempt}/{max_retries}), retrying...")
+            continue
+
+    if last_data is not None:
+        log.warn(f"[SUMMARIZER] {label} — using best-effort parsed response (missing '{key}')")
+        return last_data
+
+    log.error(f"[SUMMARIZER] {label} — failed after {max_retries} attempts")
+    return None
 
 # ---------------------------------------------------------------------------
 # Prompts
@@ -535,43 +554,52 @@ def run_summarizer(
     # Call 0 — theme discovery                                            #
     # ------------------------------------------------------------------ #
     log.info("[SUMMARIZER] Call 0 — discovering themes...")
-    try:
-        discovery   = _call_json(client, _SYSTEM, _prompt_discover_themes(user_query, context), "theme-discovery")
-        themes_meta = discovery.get("themes", [])
+    themes_meta = _call_part(
+        client, _prompt_discover_themes(user_query, context), "themes", "theme-discovery"
+    )
+    if not themes_meta:
+        # Degrade instead of aborting the whole run — a single oversized or
+        # flaky call shouldn't zero out an entire summarization.
+        log.warn("[SUMMARIZER] Theme discovery failed after retries — falling back to one general theme")
+        themes_meta = [{
+            "id": "theme_1",
+            "title": "General Discussion",
+            "description": "General findings from the Reddit data relevant to the query.",
+        }]
+    else:
         log.info(f"[SUMMARIZER] {len(themes_meta)} themes: {[t.get('title', '?') for t in themes_meta]}")
-    except Exception as e:
-        log.error(f"[SUMMARIZER] Theme discovery failed: {e}")
-        return {}
 
     # ------------------------------------------------------------------ #
     # Call 1 — direct answer                                              #
     # ------------------------------------------------------------------ #
     log.info("[SUMMARIZER] Call 1 — direct answer...")
     direct_answer = "We didn't find enough Reddit discussions that directly address this — the data available doesn't give us a confident answer for your query."
-    try:
-        answer_data   = _call_json(client, _SYSTEM, _prompt_direct_answer(user_query, context), "direct-answer")
-        direct_answer = answer_data.get("direct_answer", direct_answer)
+    da = _call_part(client, _prompt_direct_answer(user_query, context), "direct_answer", "direct-answer")
+    if da:
+        direct_answer = da
         log.info(f"[SUMMARIZER] Direct answer — {direct_answer[:80]}...")
-    except Exception as e:
-        log.warn(f"[SUMMARIZER] Direct answer failed — using fallback: {e}")
+    else:
+        log.warn("[SUMMARIZER] Direct answer failed after retries — using fallback message")
 
     # ------------------------------------------------------------------ #
     # Call 2 — overview                                                   #
     # ------------------------------------------------------------------ #
     log.info("[SUMMARIZER] Call 2 — overview...")
-    try:
-        overview = _call_json(client, _SYSTEM, _prompt_overview(
-            user_query, context, subreddits, now_iso,
-            total_posts, total_comments, model_name, date_range,
-        ), "overview")
+    overview = _call_part(client, _prompt_overview(
+        user_query, context, subreddits, now_iso,
+        total_posts, total_comments, model_name, date_range,
+    ), None, "overview")
+    if overview:
         log.info(
             f"[SUMMARIZER] Overview — "
             f"sentiment={overview.get('overall_sentiment')} | "
             f"confidence={overview.get('meta', {}).get('confidence')}"
         )
-    except Exception as e:
-        log.error(f"[SUMMARIZER] Overview failed: {e}")
-        return {}
+    else:
+        # _fill_defaults() below fills every field an empty overview is
+        # missing, so degrade rather than aborting the whole run.
+        log.warn("[SUMMARIZER] Overview failed after retries — falling back to defaults")
+        overview = {}
 
     # ------------------------------------------------------------------ #
     # Calls 3…N — one theme per call                                      #
@@ -581,11 +609,11 @@ def run_summarizer(
         theme_title = tm.get("title", f"Theme {i+1}")
         theme_id    = tm.get("id", f"theme_{i+1}")
         log.info(f"[SUMMARIZER] Call {i+3} — theme: '{theme_title}'...")
-        try:
-            theme = _call_json(client, _SYSTEM, _prompt_theme(
-                user_query, context,
-                theme_id, theme_title, tm.get("description", ""),
-            ), f"theme-{theme_id}")
+        theme = _call_part(client, _prompt_theme(
+            user_query, context,
+            theme_id, theme_title, tm.get("description", ""),
+        ), None, f"theme-{theme_id}")
+        if theme:
             themes.append(theme)
             log.info(
                 f"[SUMMARIZER] Theme '{theme_title}' — "
@@ -594,8 +622,8 @@ def run_summarizer(
                 f"pain_points={len(theme.get('pain_points', []))} | "
                 f"quotes={len(theme.get('quotes', []))}"
             )
-        except Exception as e:
-            log.warn(f"[SUMMARIZER] Theme '{theme_title}' failed — skipping: {e}")
+        else:
+            log.warn(f"[SUMMARIZER] Theme '{theme_title}' failed after retries — skipping")
 
     # ------------------------------------------------------------------ #
     # Call N+1 — actionable next steps                                    #
@@ -612,16 +640,16 @@ def run_summarizer(
         if not reddit_evidence:
             log.warn("[SUMMARIZER] Actionable next steps — no user_suggested_solutions found in themes, skipping")
         else:
-            try:
-                ans_data = _call_json(
-                    client, _SYSTEM,
-                    _prompt_actionable_next_steps(user_query, direct_answer, themes),
-                    "actionable-next-steps",
-                )
-                actionable_next_steps = ans_data.get("actionable_next_steps") or []
+            steps = _call_part(
+                client,
+                _prompt_actionable_next_steps(user_query, direct_answer, themes),
+                "actionable_next_steps", "actionable-next-steps",
+            )
+            actionable_next_steps = steps or []
+            if steps:
                 log.info(f"[SUMMARIZER] Actionable next steps — {len(actionable_next_steps)} steps generated")
-            except Exception as e:
-                log.warn(f"[SUMMARIZER] Actionable next steps failed — skipping: {e}")
+            else:
+                log.warn("[SUMMARIZER] Actionable next steps failed after retries — skipping")
 
     # ------------------------------------------------------------------ #
     # Assemble                                                             #
