@@ -23,6 +23,7 @@ async def get_queries(
 # ):
 #     return await services.get_all_query(db)
 
+
 @router.get("/query/{query_id}/result")
 async def admin_get_result(
     query_id: UUID,

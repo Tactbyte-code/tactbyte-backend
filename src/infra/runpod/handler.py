@@ -12,7 +12,7 @@ async def handler(job: dict):
     """
     RunPod serverless handler.
     service: "reddit" | "playstore" | "ai-lead-engine"
-    mode:    "search" | "summary" | "sync-leads"
+    mode:    "search" | "summary"   | "sync-leads"
     """
     inp      = job.get("input", {})
     service  = inp.get("service")

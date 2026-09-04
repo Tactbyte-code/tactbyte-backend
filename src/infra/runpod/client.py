@@ -8,6 +8,9 @@ logger = logging.getLogger(__name__)
 
 async def trigger(query_id: str, service: str, mode: str) -> str:
     """Trigger a RunPod job. Returns the job ID."""
+
+    print(f"Triggering RunPod job for query_id={query_id}, mode={mode}")
+
     api_key      = settings.RUNPOD_API_KEY
     endpoint_url = settings.RUNPOD_ENDPOINT
 
