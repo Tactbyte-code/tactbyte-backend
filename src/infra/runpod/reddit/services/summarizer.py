@@ -14,20 +14,15 @@ CALL STRATEGY (prevents truncation, guarantees schema compliance):
   Call N+1  → actionable_next_steps : ordered how-to steps to accomplish direct answer,
                                        backed by Reddit user suggestions only
   Final     → assemble + repair + validate
-
-RELIABILITY NOTE:
-  client.call() can legitimately hand back an empty string with no exception
-  raised (provider-side content filter, truncated/cold-start response, a
-  transient network blip, etc). Every LLM call in this module goes through
-  `_call_json()`, which retries with backoff and parses only once a
-  non-empty response comes back — so a single flaky call (most commonly the
-  very first one, Call 0) no longer aborts the entire summarization.
+OUTPUT SCHEMA (fixed):
+  query, subreddit, analyzed_at, direct_answer, executive_summary,
+  overall_sentiment, total_signals, themes[], market_signals,
+  actionable_next_steps, meta
 ─────────────────────────────────────────────────────────────────────────────
 """
 from __future__ import annotations
 import json
 import re
-import time
 from datetime import datetime, timezone
 from typing import Any
 import runpod
@@ -40,15 +35,6 @@ log = runpod.RunPodLogger()
 MAX_POST_BODY_CHARS    = 600
 MAX_COMMENT_BODY_CHARS = 350
 MAX_COMMENTS_PER_POST  = 10
-
-# Hard cap on the compact Reddit context we ever send to the LLM. Oversized,
-# uncurated context is a common trigger for provider-side truncation or
-# silent content-filter blocks (which surface here as an empty response).
-MAX_CONTEXT_CHARS = 60_000
-
-# Retry policy for every LLM call in this module.
-LLM_MAX_RETRIES     = 3      # total attempts per call
-LLM_RETRY_BACKOFF_S = 2.0    # base seconds, doubles each retry
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -159,16 +145,7 @@ def _build_context(posts: list[dict[str, Any]]) -> tuple[str, int]:
             lines.append(f'  "{body_text}"')
             total_comments += 1
 
-    context = "\n".join(lines)
-
-    if len(context) > MAX_CONTEXT_CHARS:
-        log.warn(
-            f"[SUMMARIZER] Context is {len(context)} chars — truncating to "
-            f"{MAX_CONTEXT_CHARS} to reduce risk of provider-side truncation/blocking"
-        )
-        context = context[:MAX_CONTEXT_CHARS]
-
-    return context, total_comments
+    return "\n".join(lines), total_comments
 
 # ---------------------------------------------------------------------------
 # JSON parser
@@ -178,49 +155,10 @@ def _parse_json(raw: str | None, label: str) -> dict:
         raise RuntimeError(f"[{label}] LLM returned empty response")
     clean = re.sub(r"```json\s*|```\s*", "", raw).strip()
     clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL).strip()
-    if not clean:
-        raise RuntimeError(f"[{label}] LLM response was empty after stripping fences/think-blocks")
     try:
         return json.loads(clean)
     except json.JSONDecodeError as e:
         raise RuntimeError(f"[{label}] JSON parse error: {e}\nRaw (first 400):\n{clean[:400]}")
-
-# ---------------------------------------------------------------------------
-# Resilient LLM call — retries transient empty/malformed responses
-# ---------------------------------------------------------------------------
-def _call_json(
-    client,
-    system: str,
-    prompt: str,
-    label: str,
-    max_retries: int = LLM_MAX_RETRIES,
-) -> dict:
-    """
-    Calls client.call(system, prompt), parses the JSON response, and retries
-    with backoff on empty responses or JSON parse failures. client.call() can
-    legitimately return "" with no exception (content filter, truncated
-    response, transient blip) — most exposed on the very first call of a run,
-    so every call site in this module goes through here instead of calling
-    client.call()/_parse_json() directly.
-    """
-    last_err: Exception | None = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            raw = client.call(system, prompt)
-            raw_len = len(raw) if raw else 0
-            if not raw:
-                raise RuntimeError(
-                    f"[{label}] LLM returned empty response "
-                    f"(attempt {attempt}/{max_retries}, prompt_chars={len(prompt)})"
-                )
-            return _parse_json(raw, label)
-        except Exception as e:
-            last_err = e
-            log.warn(f"[SUMMARIZER] {label} attempt {attempt}/{max_retries} failed: {e}")
-            if attempt < max_retries:
-                time.sleep(LLM_RETRY_BACKOFF_S * attempt)
-
-    raise RuntimeError(f"[{label}] failed after {max_retries} attempts: {last_err}")
 
 # ---------------------------------------------------------------------------
 # Prompts
@@ -528,7 +466,7 @@ def run_summarizer(
 
     log.info(
         f"[SUMMARIZER] {total_posts} posts | {total_comments} comments | "
-        f"context_chars={len(context)} | subreddits={subreddits}"
+        f"subreddits={subreddits}"
     )
 
     # ------------------------------------------------------------------ #
@@ -536,9 +474,9 @@ def run_summarizer(
     # ------------------------------------------------------------------ #
     log.info("[SUMMARIZER] Call 0 — discovering themes...")
     try:
-        discovery   = _call_json(client, _SYSTEM, _prompt_discover_themes(user_query, context), "theme-discovery")
-        themes_meta = discovery.get("themes", [])
-        log.info(f"[SUMMARIZER] {len(themes_meta)} themes: {[t.get('title', '?') for t in themes_meta]}")
+        raw         = client.call(_SYSTEM, _prompt_discover_themes(user_query, context))
+        themes_meta = _parse_json(raw, "theme-discovery").get("themes", [])
+        log.info(f"[SUMMARIZER] {len(themes_meta)} themes: {[t['title'] for t in themes_meta]}")
     except Exception as e:
         log.error(f"[SUMMARIZER] Theme discovery failed: {e}")
         return {}
@@ -549,8 +487,8 @@ def run_summarizer(
     log.info("[SUMMARIZER] Call 1 — direct answer...")
     direct_answer = "We didn't find enough Reddit discussions that directly address this — the data available doesn't give us a confident answer for your query."
     try:
-        answer_data   = _call_json(client, _SYSTEM, _prompt_direct_answer(user_query, context), "direct-answer")
-        direct_answer = answer_data.get("direct_answer", direct_answer)
+        raw           = client.call(_SYSTEM, _prompt_direct_answer(user_query, context))
+        direct_answer = _parse_json(raw, "direct-answer").get("direct_answer", direct_answer)
         log.info(f"[SUMMARIZER] Direct answer — {direct_answer[:80]}...")
     except Exception as e:
         log.warn(f"[SUMMARIZER] Direct answer failed — using fallback: {e}")
@@ -560,10 +498,11 @@ def run_summarizer(
     # ------------------------------------------------------------------ #
     log.info("[SUMMARIZER] Call 2 — overview...")
     try:
-        overview = _call_json(client, _SYSTEM, _prompt_overview(
+        raw      = client.call(_SYSTEM, _prompt_overview(
             user_query, context, subreddits, now_iso,
             total_posts, total_comments, model_name, date_range,
-        ), "overview")
+        ))
+        overview = _parse_json(raw, "overview")
         log.info(
             f"[SUMMARIZER] Overview — "
             f"sentiment={overview.get('overall_sentiment')} | "
@@ -578,24 +517,23 @@ def run_summarizer(
     # ------------------------------------------------------------------ #
     themes = []
     for i, tm in enumerate(themes_meta):
-        theme_title = tm.get("title", f"Theme {i+1}")
-        theme_id    = tm.get("id", f"theme_{i+1}")
-        log.info(f"[SUMMARIZER] Call {i+3} — theme: '{theme_title}'...")
+        log.info(f"[SUMMARIZER] Call {i+3} — theme: '{tm['title']}'...")
         try:
-            theme = _call_json(client, _SYSTEM, _prompt_theme(
+            raw   = client.call(_SYSTEM, _prompt_theme(
                 user_query, context,
-                theme_id, theme_title, tm.get("description", ""),
-            ), f"theme-{theme_id}")
+                tm["id"], tm["title"], tm.get("description", ""),
+            ))
+            theme = _parse_json(raw, f"theme-{tm['id']}")
             themes.append(theme)
             log.info(
-                f"[SUMMARIZER] Theme '{theme_title}' — "
+                f"[SUMMARIZER] Theme '{tm['title']}' — "
                 f"sentiment={theme.get('sentiment')} | "
                 f"signals={theme.get('signal_count')} | "
                 f"pain_points={len(theme.get('pain_points', []))} | "
                 f"quotes={len(theme.get('quotes', []))}"
             )
         except Exception as e:
-            log.warn(f"[SUMMARIZER] Theme '{theme_title}' failed — skipping: {e}")
+            log.warn(f"[SUMMARIZER] Theme '{tm['title']}' failed — skipping: {e}")
 
     # ------------------------------------------------------------------ #
     # Call N+1 — actionable next steps                                    #
@@ -613,11 +551,11 @@ def run_summarizer(
             log.warn("[SUMMARIZER] Actionable next steps — no user_suggested_solutions found in themes, skipping")
         else:
             try:
-                ans_data = _call_json(
-                    client, _SYSTEM,
+                raw = client.call(
+                    _SYSTEM,
                     _prompt_actionable_next_steps(user_query, direct_answer, themes),
-                    "actionable-next-steps",
                 )
+                ans_data = _parse_json(raw, "actionable-next-steps")
                 actionable_next_steps = ans_data.get("actionable_next_steps") or []
                 log.info(f"[SUMMARIZER] Actionable next steps — {len(actionable_next_steps)} steps generated")
             except Exception as e:
@@ -655,7 +593,7 @@ def run_summarizer(
     result = _fill_defaults(result, user_query, model_name, total_posts, total_comments, now_iso)
     result = _repair(result)
 
-    log.info(
+    log.info(   
         f"[SUMMARIZER] Complete — "
         f"{len(result['themes'])} themes | "
         f"sentiment={result['overall_sentiment']} | "
