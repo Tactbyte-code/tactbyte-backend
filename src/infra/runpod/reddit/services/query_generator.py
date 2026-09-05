@@ -343,7 +343,7 @@ def generate_queries(
 
     # ── Resolve client ────────────────────────────────────────────────────────
     if client is None:
-        from llm_client import get_client
+        from src.infra.runpod.llm import get_client
         client = get_client(settings=settings)
 
     is_mock = client.provider == "mock"
