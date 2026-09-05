@@ -33,8 +33,11 @@ import os
 import re
 import urllib.request
 import urllib.error
+import runpod
 
 from src.core.settings import settings
+
+log = runpod.RunPodLogger()
 
 # ── Provider defaults ─────────────────────────────────────────────────────────
 _PROVIDER_DEFAULTS = {
@@ -168,15 +171,14 @@ def _pick_model(requested: str, free_gb: float) -> str:
     for candidate in reversed(_FALLBACK_LADDER):
         c_sizes = _MODEL_SIZE_GB.get(candidate)
         if c_sizes and c_sizes[1] <= usable:
-            print(
+            log.info(
                 f"[LLM client]  '{requested}' needs ~{nf4_gb:.1f}GB (nf4) "
                 f"but only {usable:.1f}GB usable → downgraded to '{candidate}'",
-                flush=True,
             )
             return candidate
 
     fallback = _FALLBACK_LADDER[0]
-    print(f"[LLM client]  Not enough VRAM → CPU fallback with '{fallback}'", flush=True)
+    log.info(f"[LLM client]  Not enough VRAM → CPU fallback with '{fallback}'")
     return fallback
 
 
@@ -201,7 +203,7 @@ class LLMClient:
         self._hf_model     = None
         self._hf_tokenizer = None
 
-        print(f"[LLM client] LLMClient ready → provider={provider} | model={model}", flush=True)
+        log.info(f"[LLM client] LLMClient ready → provider={provider} | model={model}")
 
     # ── Public interface ──────────────────────────────────────────────────────
     def call(self, system: str, prompt: str) -> str:
@@ -404,23 +406,26 @@ class LLMClient:
             {"role": "system", "content": system},
             {"role": "user",   "content": prompt},
         ]
+
         try:
             text = self._hf_tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
             )
+            log.info(f"[LLM client] enable_thinking=False applied successfully")
         except TypeError:
             text = self._hf_tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
+            log.info(f"[LLM client]  Tokenizer doesn't support enable_thinking — thinking NOT disabled!")
 
         inputs = self._hf_tokenizer([text], return_tensors="pt").to(self._hf_model.device)
 
         free_gb = _vram_info()[0]
         # Hard floor on tiny GPUs to avoid OOM during generation
         if free_gb < 2.0:
-            max_new_toks = 256
+            max_new_toks = 1024   # was 256 — too small for Qwen3's <think> overhead
         elif free_gb < 6.0:
-            max_new_toks = 1024
+            max_new_toks = 1536
         else:
             # Large GPU (RunPod 48GB etc.) — use full configured limit
             key = "hf-local" if self.provider == "hf-local" else "hf"
@@ -440,12 +445,15 @@ class LLMClient:
         output_ids = generated_ids[0][len(inputs.input_ids[0]):]
         output     = self._hf_tokenizer.decode(output_ids, skip_special_tokens=True).strip()
 
+        log.info(f"[LLM client] Raw HF output BEFORE stripping ({len(output)} chars): {output[:500]!r}")
+
         del inputs, generated_ids, output_ids
         _purge_vram()
 
-        # Strip markdown fences + Qwen3 <think> blocks
         output = re.sub(r"```json\s*|```\s*", "", output).strip()
         output = re.sub(r"<think>.*?</think>", "", output, flags=re.DOTALL).strip()
+
+        log.info(f"[LLM client] Output AFTER stripping ({len(output)} chars): {output[:300]!r}")
         return output
 
     def __repr__(self):

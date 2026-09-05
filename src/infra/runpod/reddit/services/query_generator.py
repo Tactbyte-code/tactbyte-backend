@@ -356,6 +356,7 @@ def generate_queries(
 
     # ── Build shared context ──────────────────────────────────────────────────
     context = _build_context(profile, conversation_history)
+    log(f"[Query Generator] Context: {context}")
 
     # ── Call LLM (or mock) ────────────────────────────────────────────────────
     if is_mock:
@@ -447,7 +448,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output",   default=None)
     args = parser.parse_args()
 
-    from llm_client import get_client
+    from src.infra.runpod.llm import get_client
     _client = get_client(provider=args.provider, model=args.model)
 
     result = generate_queries(args.query, client=_client)
