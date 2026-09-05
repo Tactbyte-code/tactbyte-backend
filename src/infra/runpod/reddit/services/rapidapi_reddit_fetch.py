@@ -38,14 +38,13 @@ JITTER_S       = 0.3
 MAX_RETRIES    = 3
 BACKOFF_BASE_S = 1.0
 
-_RAPIAPI_URL= "https://reddit34.p.rapidapi.com/v1/reddit/post"
+_RAPIAPI_URL= "https://reddit3.p.rapidapi.com/v1/reddit/post"
 
 HEADERS = {
     "x-rapidapi-key": settings.RAPIDAPI_KEY,
-    "x-rapidapi-host": "reddit34.p.rapidapi.com",
+    "x-rapidapi-host": "reddit3.p.rapidapi.com",
     "Content-Type": "application/json",
 }
-
 
 # ---------------------------------------------------------------------------
 # Comment tree parser
