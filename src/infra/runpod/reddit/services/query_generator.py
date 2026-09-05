@@ -41,7 +41,7 @@ _SYSTEM = (
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTEXT BUILDER
 # ═══════════════════════════════════════════════════════════════════════════════
-def _build_context(profile: dict = None, conversation_history: list = None) -> str:
+def _build_context(log, profile: dict = None, conversation_history: list = None) -> str:
     context = ""
     if profile:
         context += f"\nUser profile: {json.dumps(profile)}"
@@ -51,6 +51,8 @@ def _build_context(profile: dict = None, conversation_history: list = None) -> s
             for t in conversation_history
         )
         context += f"\nConversation history:\n{history_text}"
+        log(f"[Query Generator: log] - Context from build_context {context}")
+
     return context
 
 
@@ -331,6 +333,8 @@ def generate_queries(
           }
         }
     """
+    log(f"[Query Generator] Raw profile param: {profile!r} (type: {type(profile).__name__})")
+    
     def log(msg):
         if verbose:
             print(msg, flush=True)
@@ -343,13 +347,14 @@ def generate_queries(
     is_mock = client.provider == "mock"
     log(f"[Query Generator] Generating queries for: \"{user_query}\"")
     log(f"[Query Generator] Provider: {client.provider} | Model: {client.model}" + (" (mock)" if is_mock else ""))
+
     if profile:
         log(f"[Query Generator] Profile: {json.dumps(profile)}")
     if conversation_history:
         log(f"[Query Generator] History turns: {len(conversation_history)}")
 
     # ── Build shared context ──────────────────────────────────────────────────
-    context = _build_context(profile, conversation_history)
+    context = _build_context(log, profile, conversation_history)
 
     # ── Call LLM (or mock) ────────────────────────────────────────────────────
     if is_mock:

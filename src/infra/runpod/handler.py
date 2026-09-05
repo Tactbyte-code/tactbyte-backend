@@ -4,7 +4,7 @@ from src.core.settings import settings
 from src.infra.runpod.reddit.services import reddit
 from src.infra.runpod.playstore.services import playstore
 import src.app.registry 
-from src.infra.runpod.ai_lead_engine.services import ai_lead_engine
+# from src.infra.runpod.ai_lead_engine.services import ai_lead_engine
 
 # ─── Router ───────────────────────────────────────────────────────────────────
 
@@ -44,9 +44,9 @@ async def handler(job: dict):
         if mode == "summary":
             return await playstore._handle_playstore_summary(query_id)
 
-    if service == "ai-lead-engine":
-        if mode == "sync-leads":
-            return await ai_lead_engine._handle_sync_leads(query_id)
+    # if service == "ai-lead-engine":
+    #     if mode == "sync-leads":
+    #         return await ai_lead_engine._handle_sync_leads(query_id)
 
 
 runpod.serverless.start({"handler": handler})
