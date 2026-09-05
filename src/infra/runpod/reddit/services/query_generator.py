@@ -25,11 +25,7 @@ USAGE:
 """
 
 import json
-from logging import log
 import re
-import runpod
-
-log = runpod.RunPodLogger()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM PROMPT
@@ -55,8 +51,6 @@ def _build_context(profile: dict = None, conversation_history: list = None) -> s
             for t in conversation_history
         )
         context += f"\nConversation history:\n{history_text}"
-        log.info(f"[Query Generator: log] - Context from build_context {context}")
-
     return context
 
 
@@ -272,6 +266,12 @@ def _call_part(client, prompt: str, key: str, log) -> dict | None:
     Returns the VALUE at `key`, or None if both attempts fail.
     """
     for attempt in range(2):
+        # try:
+        #     raw = client.call(_SYSTEM, prompt)
+        # except Exception as e:
+        #     log(f"[Query Generator: Warning] LLM call error (attempt {attempt + 1}) for '{key}': {e}")
+        #     continue
+
         try:
             raw = client.call(_SYSTEM, prompt)
         except Exception as e:
@@ -337,21 +337,18 @@ def generate_queries(
           }
         }
     """
-    log(f"[Query Generator] Raw profile param: {profile!r} (type: {type(profile).__name__})")
-    
     def log(msg):
         if verbose:
             print(msg, flush=True)
 
     # ── Resolve client ────────────────────────────────────────────────────────
     if client is None:
-        from src.infra.runpod.llm import get_client
+        from llm_client import get_client
         client = get_client(settings=settings)
 
     is_mock = client.provider == "mock"
     log(f"[Query Generator] Generating queries for: \"{user_query}\"")
     log(f"[Query Generator] Provider: {client.provider} | Model: {client.model}" + (" (mock)" if is_mock else ""))
-
     if profile:
         log(f"[Query Generator] Profile: {json.dumps(profile)}")
     if conversation_history:
@@ -359,7 +356,6 @@ def generate_queries(
 
     # ── Build shared context ──────────────────────────────────────────────────
     context = _build_context(profile, conversation_history)
-    log(f"[Query Generator] Context from generate_queries: {context}")
 
     # ── Call LLM (or mock) ────────────────────────────────────────────────────
     if is_mock:
@@ -451,7 +447,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output",   default=None)
     args = parser.parse_args()
 
-    from src.infra.runpod.llm import get_client
+    from llm_client import get_client
     _client = get_client(provider=args.provider, model=args.model)
 
     result = generate_queries(args.query, client=_client)
