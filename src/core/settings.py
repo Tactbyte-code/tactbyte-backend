@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # LLM Configuration
     LLM_PROVIDER: str
     LLM_MODEL: str
+    LLM_PLAY_MODEL: str
     LLM_API_BASE_URL: str
     LLM_API_KEY: str
     LLM_MAX_TOKENS: int = 8192

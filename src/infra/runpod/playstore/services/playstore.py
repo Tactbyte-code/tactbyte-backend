@@ -170,7 +170,7 @@ async def _handle_playstore_summary(query_id: str) -> dict:
     # 3. Build LLM client
     client = get_client(
         provider=   settings.LLM_PROVIDER,
-        model=      settings.LLM_MODEL,
+        model=      settings.LLM_PLAY_MODEL,
         api_key=    settings.LLM_API_KEY,
         base_url=   settings.LLM_API_BASE_URL,
         max_tokens= settings.LLM_MAX_TOKENS,
