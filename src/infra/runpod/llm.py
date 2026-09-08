@@ -58,7 +58,7 @@ _MAX_TOKENS = {
     "openai":    4000,
     "gemini":    8192,
     "ollama":    4000,
-    "sarvam":    2000,
+    "sarvam":    8000,
     "hf":        8192,   # 48GB GPU: plenty of KV cache headroom
     "hf-local":  1024,   # small local GPU: keep it fast
     "mock":      0,
