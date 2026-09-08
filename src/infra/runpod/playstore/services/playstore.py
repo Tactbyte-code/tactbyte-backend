@@ -175,7 +175,7 @@ async def _handle_playstore_summary(query_id: str) -> dict:
         base_url=   settings.LLM_API_BASE_URL,
         max_tokens= settings.LLM_MAX_TOKENS,
     )
- 
+
     # 4. Run summarizer
     try:
         final_output = run_summarizer(
