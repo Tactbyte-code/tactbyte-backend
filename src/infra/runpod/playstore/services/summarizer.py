@@ -554,7 +554,10 @@ def run_summarizer(
     log.info("[PLAYSTORE][SUMMARIZER] Call 0 — discovering themes")
     try:
         raw         = client.call(_SYSTEM, _prompt_discover_themes(app_name, context))
+        log.info(f"[PLAYSTORE][SUMMARIZER] raw data {raw}")
         themes_meta = _parse_json(raw, "theme-discovery").get("themes", [])
+        log.info(f"[PLAYSTORE][SUMMARIZER] themes meta {themes_meta}")
+
         log.info(f"[PLAYSTORE][SUMMARIZER] {len(themes_meta)} themes discovered")
     except Exception as e:
         log.error(f"[PLAYSTORE][SUMMARIZER] Theme discovery failed — aborting: {e}")
