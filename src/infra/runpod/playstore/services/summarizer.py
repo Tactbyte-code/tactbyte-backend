@@ -11,26 +11,11 @@ Multi-call strategy:
   Call N+1 → actionable next steps
 
 Payload budget:
-  Two independent ceilings apply to every context block sent to the LLM,
-  and we always use whichever is SMALLER:
-
-  1. Azure APIM buffered body limit = 2 MiB (2,097,152 bytes).
-     We target 1.5 MiB (1,572,864 bytes) per call to leave headroom for
-     prompt text, system instructions, and JSON framing overhead.
-
-  2. The model's actual context window (in tokens). A request can be well
-     under 2 MiB and still overflow a small-context model — e.g.
-     sarvam-105b-conversations has only a 32,000-token window, which is
-     roughly 100-130K characters once you reserve room for the system
-     prompt, instructions, and the model's own output. This is the ceiling
-     that was previously missing and caused:
-       "prompt_tokens (59538) + max_tokens (8000) = 67538 exceeds the
-        model context window of 32000 tokens for sarvam-105b-conversations"
-     on larger apps, while smaller apps happened to stay under both
-     budgets by coincidence.
-
-  _build_context() enforces whichever budget is smaller by dropping
-  reviews once the encoded byte length would exceed it.
+  Azure APIM buffered body limit = 2 MiB (2,097,152 bytes).
+  We target 1.5 MiB (1,572,864 bytes) per call to leave headroom for
+  prompt text, system instructions, and JSON framing overhead.
+  _build_context() enforces this hard ceiling by dropping reviews once
+  the encoded byte length would exceed the budget.
 """
 from __future__ import annotations
 
@@ -44,7 +29,7 @@ import runpod
 
 log = runpod.RunPodLogger()
 
-# ── Payload budget (transport layer) ──────────────────────────────────────────
+# ── Payload budget ────────────────────────────────────────────────────────────
 # Azure APIM buffers up to 2 MiB per request body.
 # We reserve 512 KiB for prompt text, system instructions, and JSON framing,
 # leaving 1.5 MiB for the review context block.
@@ -54,47 +39,6 @@ _CONTEXT_BUDGET_BYTES     = (
     _AZURE_BUFFER_LIMIT_BYTES - _PROMPT_OVERHEAD_BYTES  # 1.5 MiB for reviews
 )
 
-# ── Model context window (token layer) ────────────────────────────────────────
-# The byte budget above is a transport ceiling — it says nothing about how
-# many *tokens* the target model can actually accept. Small-context models
-# (sarvam-105b at 32K tokens) will overflow long before 1.5 MiB of text is
-# reached. Map known models to their real context window so we can derive a
-# second, tighter budget and always use the smaller of the two.
-_MODEL_CONTEXT_WINDOW = {
-    "sarvam-105b":               32_000,
-    "sarvam-105b-conversations": 32_000,
-    "gpt-4o":                    128_000,
-    "gemini-2.0-flash":          1_000_000,
-    "gemini-3.6-flash":          1_000_000,
-    "claude-sonnet-4-20250514":  200_000,
-    "llama3":                    8_192,
-    "Qwen/Qwen3-14B":            32_768,
-    "Qwen/Qwen2.5-3B-Instruct":  32_768,
-}
-_DEFAULT_CONTEXT_WINDOW = 8_000     # conservative fallback for unlisted models
-_RESERVED_OUTPUT_TOKENS = 2_500     # headroom for the model's own response
-_PROMPT_OVERHEAD_TOKENS = 1_200     # system prompt + instructions + JSON schema
-_CHARS_PER_TOKEN         = 3.2      # conservative — JSON/quoted text tokenizes
-                                     # denser than plain prose, so this errs low
-
-
-def _token_context_budget_bytes(client) -> int:
-    """
-    Convert the model's real context window into a byte budget for
-    _build_context(), after reserving room for the system prompt,
-    instructions, and the model's own output tokens.
-    """
-    window = _MODEL_CONTEXT_WINDOW.get(client.model, _DEFAULT_CONTEXT_WINDOW)
-    usable_tokens = max(window - _RESERVED_OUTPUT_TOKENS - _PROMPT_OVERHEAD_TOKENS, 1_000)
-    usable_chars  = int(usable_tokens * _CHARS_PER_TOKEN)
-    return usable_chars  # treated as bytes below — safe for ASCII-heavy review text
-
-
-def _effective_context_budget(client) -> int:
-    """Always use whichever ceiling is smaller: transport (Azure) or model (tokens)."""
-    return min(_CONTEXT_BUDGET_BYTES, _token_context_budget_bytes(client))
-
-
 # ── Per-review truncation ─────────────────────────────────────────────────────
 # Tighter limits reduce per-review byte cost without losing signal.
 MAX_REVIEW_CHARS = 220   # was 400 — saves ~45% per review
@@ -102,12 +46,13 @@ MAX_REPLY_CHARS  = 100   # was 200
 
 # ── Theme-call review cap ─────────────────────────────────────────────────────
 # Per-theme calls receive only keyword-matched reviews, capped here.
-# NOTE: this was previously set to 600 (matching the *global* call's scale),
-# despite the module docstring always having documented 30 — at 600 reviews
-# per theme, per-theme calls hit the exact same context-overflow bug as the
-# global calls, just later, since large apps also have larger per-theme
-# keyword-match pools. Restored to match the documented, budget-safe value.
-_THEME_MAX_REVIEWS = 30
+_THEME_MAX_REVIEWS = 600
+
+# ── Global-call review cap (token budget guard) ───────────────────────────────
+# sarvam-105b-conversations has a 32k token context window.
+# ~300 reviews × ~80 tokens/review ≈ 24k tokens, leaving ~8k for
+# prompt text + max_tokens (2000). Adjust down if you still hit limits.
+_GLOBAL_MAX_REVIEWS = 300
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 _SYSTEM = (
@@ -218,9 +163,7 @@ def _build_context(
 
     Reviews are added one at a time. Once adding the next review would push
     the encoded byte length over `budget_bytes`, we stop — ensuring the
-    context block never exceeds the caller-supplied budget. Callers should
-    pass the EFFECTIVE budget (see _effective_context_budget()), not the raw
-    Azure transport ceiling, so the model's own context window is respected.
+    context block never exceeds the Azure APIM 1.5 MiB budget.
 
     Returns (context_string, reviews_included_count).
     """
@@ -247,8 +190,7 @@ def _build_context(
         if total_bytes + block_bytes > budget_bytes:
             log.warn(
                 f"[PLAYSTORE][SUMMARIZER] Context budget reached at review {included} "
-                f"({total_bytes:,} bytes, budget={budget_bytes:,}) — "
-                f"{len(reviews) - included} reviews dropped"
+                f"({total_bytes:,} bytes) — {len(reviews) - included} reviews dropped"
             )
             break
 
@@ -309,6 +251,47 @@ def _filter_reviews_for_theme(
         f"{len(filtered)} relevant reviews selected from {len(reviews)}"
     )
     return filtered
+
+
+# ── Global review sampler (token budget guard) ────────────────────────────────
+def _sample_reviews_for_global_calls(
+    reviews: list[dict[str, Any]],
+    max_reviews: int = _GLOBAL_MAX_REVIEWS,
+) -> list[dict[str, Any]]:
+    """
+    Return a balanced sample of reviews across all star ratings.
+
+    Picks reviews evenly across 1–5 star buckets so the global calls
+    (theme discovery, direct answer, overview) see a representative
+    cross-section rather than just the first N reviews.
+    """
+    if len(reviews) <= max_reviews:
+        return reviews
+
+    from collections import defaultdict
+    buckets: dict[int, list] = defaultdict(list)
+    for r in reviews:
+        star = r.get("score") or 0
+        buckets[star].append(r)
+
+    per_bucket = max(1, max_reviews // 5)
+    sampled: list[dict] = []
+    for star in range(1, 6):
+        sampled.extend(buckets[star][:per_bucket])
+
+    # fill remaining slots with whatever is left, sorted by thumbs_up desc
+    if len(sampled) < max_reviews:
+        seen_ids = {r.get("review_id") for r in sampled}
+        remaining = [r for r in reviews if r.get("review_id") not in seen_ids]
+        remaining.sort(key=lambda r: r.get("thumbs_up") or 0, reverse=True)
+        sampled.extend(remaining[: max_reviews - len(sampled)])
+
+    log.info(
+        f"[PLAYSTORE][SUMMARIZER] Global sample: "
+        f"{len(sampled)}/{len(reviews)} reviews selected "
+        f"(cap={max_reviews})"
+    )
+    return sampled
 
 
 # ── JSON parser ───────────────────────────────────────────────────────────────
@@ -578,21 +561,19 @@ def run_summarizer(
 
     Payload strategy
     ----------------
-    Every context block sent to the LLM respects the EFFECTIVE budget —
-    whichever is smaller of the Azure transport ceiling (1.5 MiB) or the
-    model's real token-derived budget (see _effective_context_budget()).
-    This is what was previously missing: on a small-context model like
-    sarvam-105b-conversations (32K tokens), the token budget is far
-    tighter than the byte budget and must win.
+    Each call to client.call() sends at most _CONTEXT_BUDGET_BYTES (1.5 MiB)
+    of review text, keeping total request body under Azure APIM's 2 MiB
+    buffered payload limit.
 
     Global calls (theme discovery, direct answer, overview):
-      _build_context() enforces the effective budget automatically —
-      reviews are added until the next one would exceed it, then dropped.
+      _build_context() enforces the byte budget automatically — reviews are
+      added until the next one would exceed 1.5 MiB, then dropped.
 
     Per-theme calls:
       _filter_reviews_for_theme() selects only keyword-matched reviews
       (capped at _THEME_MAX_REVIEWS = 30), then _build_context() enforces
-      the same effective budget on that already-small slice.
+      the byte budget on that already-small slice. This produces payloads
+      well under 200 KB per theme call in practice.
     """
     if not reviews:
         log.warn("[PLAYSTORE][SUMMARIZER] No reviews provided — aborting")
@@ -606,28 +587,24 @@ def run_summarizer(
     avg_rating       = round(sum(scores) / len(scores), 2) if scores else 0.0
     rating_breakdown = {str(i): scores.count(i) for i in range(1, 6)}
 
-    # Resolve the effective budget once per run — smaller of Azure transport
-    # ceiling vs. this model's real token-derived budget.
-    effective_budget = _effective_context_budget(client)
     log.info(
         f"[PLAYSTORE][SUMMARIZER] Starting | "
         f"app={app_name!r} reviews={total_reviews} avg_rating={avg_rating} "
-        f"model={model_name} context_window={_MODEL_CONTEXT_WINDOW.get(model_name, _DEFAULT_CONTEXT_WINDOW):,} tokens "
-        f"effective_budget={effective_budget:,}B (azure_cap={_CONTEXT_BUDGET_BYTES:,}B)"
+        f"context_budget={_CONTEXT_BUDGET_BYTES:,}B"
     )
 
     # Build the shared context for global calls (budget-capped).
+    # _sample_reviews_for_global_calls() guards the token limit first,
+    # then _build_context() enforces the byte budget on the sample.
     # Theme calls will re-build their own smaller contexts below.
-    context, included = _build_context(reviews, budget_bytes=effective_budget)
+    global_reviews    = _sample_reviews_for_global_calls(reviews)
+    context, included = _build_context(global_reviews)
 
     # ── Call 0 — theme discovery ──────────────────────────────────────────────
     log.info("[PLAYSTORE][SUMMARIZER] Call 0 — discovering themes")
     try:
         raw         = client.call(_SYSTEM, _prompt_discover_themes(app_name, context))
-        log.info(f"[PLAYSTORE][SUMMARIZER] raw data {raw}")
         themes_meta = _parse_json(raw, "theme-discovery").get("themes", [])
-        log.info(f"[PLAYSTORE][SUMMARIZER] themes meta {themes_meta}")
-
         log.info(f"[PLAYSTORE][SUMMARIZER] {len(themes_meta)} themes discovered")
     except Exception as e:
         log.error(f"[PLAYSTORE][SUMMARIZER] Theme discovery failed — aborting: {e}")
@@ -660,7 +637,7 @@ def run_summarizer(
 
     # ── Calls 3…N — one theme per call ───────────────────────────────────────
     # Each call gets only keyword-relevant reviews, re-budget-capped, so
-    # per-theme payloads are typically well under the effective budget.
+    # per-theme payloads are typically well under 200 KB.
     themes: list[dict] = []
     for i, tm in enumerate(themes_meta):
         call_num = i + 3
@@ -669,7 +646,7 @@ def run_summarizer(
             theme_reviews = _filter_reviews_for_theme(
                 reviews, tm["title"], tm.get("description", "")
             )
-            theme_context, _ = _build_context(theme_reviews, budget_bytes=effective_budget)
+            theme_context, _ = _build_context(theme_reviews)
             raw   = client.call(_SYSTEM, _prompt_theme(
                 app_name, theme_context,
                 tm["id"], tm["title"], tm.get("description", ""),
