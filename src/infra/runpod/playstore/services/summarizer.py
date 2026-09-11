@@ -50,9 +50,9 @@ _THEME_MAX_REVIEWS = 600
 
 # ── Global-call review cap (token budget guard) ───────────────────────────────
 # sarvam-105b-conversations has a 32k token context window.
-# ~300 reviews × ~80 tokens/review ≈ 24k tokens, leaving ~8k for
+# ~200 reviews × ~80 tokens/review ≈ 24k tokens, leaving ~8k for
 # prompt text + max_tokens (2000). Adjust down if you still hit limits.
-_GLOBAL_MAX_REVIEWS = 300
+_GLOBAL_MAX_REVIEWS = 200
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 _SYSTEM = (
@@ -171,6 +171,10 @@ def _build_context(
     total_bytes = 0
     included = 0
 
+    # ── Per-review token cap ──────────────────────────────────────────────────────
+    # Rough estimate: 1 token ≈ 4 chars. Cap each block at 300 tokens worth.
+    _MAX_BLOCK_CHARS = 300 * 4  # 1200 chars per review block hard ceiling
+
     for r in reviews:
         stars   = "★" * (r.get("score") or 0)
         header  = (
@@ -185,6 +189,11 @@ def _build_context(
         reply_line   = f'DevReply: "{reply}"' if reply else ""
 
         block = "\n".join(filter(None, [header, user_line, content_line, reply_line]))
+
+        # Hard cap on total block size regardless of individual field truncation
+        if len(block) > _MAX_BLOCK_CHARS:
+            block = block[:_MAX_BLOCK_CHARS]
+
         block_bytes = len(block.encode("utf-8"))
 
         if total_bytes + block_bytes > budget_bytes:
