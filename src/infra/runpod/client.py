@@ -5,7 +5,6 @@ from src.core.settings import settings
 
 logger = logging.getLogger(__name__)
 
-
 async def trigger(query_id: str, service: str, mode: str) -> str:
     """Trigger a RunPod job. Returns the job ID."""
 

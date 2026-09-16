@@ -75,7 +75,6 @@ async def create_query(body: QueryInput, db: AsyncSession, current_user: User) -
     await db.commit()
     return {"id": str(record.id), "status": record.status}
 
-
 async def get_query(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
     record = await _get_query_or_404(query_id, current_user.id, db)
     return {
@@ -147,7 +146,6 @@ async def list_queries(status: str | None, db: AsyncSession, current_user: User)
     result = await db.execute(q)
     return result.mappings().all()
 
-
 async def submit_clarification(
     query_id: UUID, body: ClarifyingAnswerInput, db: AsyncSession, current_user: User
 ) -> dict:
@@ -209,7 +207,6 @@ async def submit_clarification(
     record.complete_step(QueryStatus.CLARIFIED)
     await db.commit()
     return {"id": str(record.id), "status": record.status}
-
 
 async def trigger_search(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
     record = await _get_query_or_404(query_id, current_user.id, db)
