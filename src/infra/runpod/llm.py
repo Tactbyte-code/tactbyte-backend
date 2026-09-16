@@ -522,6 +522,8 @@ def get_client(
         reset_client()
 
     _instance = LLMClient(provider, model, api_key, base_url)
+    log.info(f"[LLM client] instance generated → {provider}/{model} | max_tokens={_MAX_TOKENS.get(provider, 'N/A')}")
+
     return _instance
 
 
