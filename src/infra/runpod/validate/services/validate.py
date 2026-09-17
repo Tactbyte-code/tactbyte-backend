@@ -143,7 +143,12 @@ async def _handle_validate_generate_context(query_id: str) -> ValidateQueryConte
                 f"[_handle_validate_generate_context] Successfully completed context generation "
                 f"for ValidateQuery ID: {query_id}. Generated {len(generated_signals)} search queries."
             )
-            return context_record
+            
+            # FIX: Return a JSON-serializable dictionary
+            return {
+                "statusCode": 200,
+                "message": "Context generated successfully",
+            }
 
         except Exception as e:
             await db.rollback()
