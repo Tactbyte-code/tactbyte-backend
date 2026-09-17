@@ -50,13 +50,13 @@ async def raise_validate_query(body: ValidateQueryInput, db: AsyncSession, curre
         industry=             body.industry,
         stage=                body.stage,
         profile=              profile,
-        status=               ValidateQueryStatus.CREATED,
+        status=               ValidateQueryStatus.INITIALIZED,
     )
     db.add(record)
     await db.flush()
 
     try:
-        record.start_step(ValidateQueryStatus.VALIDATING)
+        record.start_step(ValidateQueryStatus.CREATED)
         await db.commit()
         
     except Exception as e:
@@ -78,7 +78,7 @@ async def raise_validate_query(body: ValidateQueryInput, db: AsyncSession, curre
 async def generate_context(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
     record = await _get_query_or_404(query_id, current_user.id, db)
 
-    if record.status != ValidateQueryStatus.VALIDATING:
+    if record.status != ValidateQueryStatus.CREATED:
         raise HTTPException(
             status_code=400,
             detail=f"Query must be created before generating context, current: {record.status}",
@@ -86,7 +86,7 @@ async def generate_context(query_id: UUID, db: AsyncSession, current_user: User)
 
     job_id = await runpod_trigger(str(query_id), service="validate", mode="generate-context")
     record.runpod_job_id = job_id
-    record.start_step(ValidateQueryStatus.SEARCHING)
+    record.start_step(ValidateQueryStatus.VALIDATING)
     await db.commit()
     logger.info("Context generation triggered", extra={"query_id": str(query_id), "job_id": job_id})
     return {"id": str(record.id), "status": record.status, "runpod_job_id": job_id}
@@ -94,10 +94,10 @@ async def generate_context(query_id: UUID, db: AsyncSession, current_user: User)
 async def trigger_search(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
     record = await _get_query_or_404(query_id, current_user.id, db)
 
-    if record.status != ValidateQueryStatus.VALIDATING:
+    if record.status != ValidateQueryStatus.VALIDATED:
         raise HTTPException(
             status_code=400,
-            detail=f"Query must be validated before searching, current: {record.status}",
+            detail=f"Context must be generated before searching, current: {record.status}",
         )
 
     job_id = await runpod_trigger(str(query_id), service="validate", mode="search")

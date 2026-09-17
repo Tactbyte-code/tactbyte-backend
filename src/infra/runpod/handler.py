@@ -50,8 +50,8 @@ async def handler(job: dict):
                 return await validate._handle_validate_generate_context(query_id)
             if mode == "search":
                 return await validate._handle_validate_search(query_id)
-            if mode == "summary":
-                return await validate._handle_validate_summary(query_id)
+            # if mode == "summary":
+            #     return await validate._handle_validate_summary(query_id)
 
     # if service == "ai-lead-engine":
     #     if mode == "sync-leads":
