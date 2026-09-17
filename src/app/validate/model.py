@@ -17,12 +17,15 @@ from src.app.utils.uuid7 import uuid7
 
 
 class ValidateQueryStatus:
-    CREATED         = "CREATED"
-    VALIDATING      = "VALIDATING"
-    SEARCHING       = "SEARCHING"
-    SCORING         = "SCORING"
-    COMPLETED       = "COMPLETED"
-    FAILED          = "FAILED"
+    INITIALIZED      = "INITIALIZED"
+    CREATED          = "CREATED"
+    VALIDATING       = "VALIDATING"
+    VALIDATED        = "VALIDATED"
+    SEARCHING        = "SEARCHING"
+    SEARCH_COMPLETED = "SEARCH_COMPLETED"
+    SCORING          = "SCORING"
+    COMPLETED        = "COMPLETED"
+    FAILED           = "FAILED"
 
 
 class ValidateFailureReason:
@@ -37,6 +40,7 @@ RECOVERABLE_STEPS = {
     ValidateQueryStatus.VALIDATING: ValidateQueryStatus.CREATED,
     ValidateQueryStatus.SEARCHING:  ValidateQueryStatus.VALIDATING,
     ValidateQueryStatus.SCORING:    ValidateQueryStatus.SEARCHING,
+    ValidateQueryStatus.SEARCH_COMPLETED: ValidateQueryStatus.SEARCHING,
 }
 
 
