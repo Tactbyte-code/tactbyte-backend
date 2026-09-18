@@ -277,7 +277,6 @@ async def _handle_validate_search(query_id: str) -> dict[str, Any]:
 # =====================================================================
 # PHASE 4: SUMMARIZATION & SCORING
 # =====================================================================
-
 async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
     """
     Step 4: Fetches the venture details and scraped Vertex AI market data,
@@ -307,12 +306,18 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
             )
             sources = sources_result.scalars().all()
 
-            # Format the sources into a readable string block for the LLM
+           # Format the sources into a readable string block for the LLM
             market_data_block = ""
             for i, src in enumerate(sources):
                 market_data_block += f"[{i+1}] URL: {src.url}\nTitle: {src.title}\nInsight/Snippet: {src.snippet}\n\n"
             
+            # --- NEW LOGGING ADDED HERE ---
+            logger.info(f"[_handle_validate_summary] Extracted {len(sources)} sources for Query ID {query_id}.")
+            logger.debug(f"[_handle_validate_summary] market_data_block content preview (first 500 chars):\n{market_data_block[:500]}")
+            # ------------------------------
+            
             if not market_data_block.strip():
+                logger.warning(f"[_handle_validate_summary] market_data_block is completely EMPTY for Query ID {query_id}!")
                 market_data_block = "No external market data found. Rely on general industry knowledge."
 
             # 3. Initialize LLM
@@ -321,10 +326,11 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 model=settings.LLM_MODEL,
                 api_key=settings.LLM_API_KEY,
                 base_url=settings.LLM_API_BASE_URL,
-                max_tokens=8000, # Summaries need higher output limits
+                max_tokens=8000, 
             )
 
             # 4. Construct the summary prompt enforcing the strict schema
+            # REMOVED evidentiary_sources from the prompt so the LLM doesn't have to guess or copy URLs.
             user_prompt = f"""
             Synthesize a comprehensive institutional validation report based on the following venture details and the raw market data provided below.
 
@@ -343,30 +349,31 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
             Set 'signal_strength' to High, Medium, or Low based on how much concrete proof you found in the RAW MARKET DATA.
 
             {{
-                "executive_verdict": "<2-3 candid sentences summarizing if this is a viable opportunity, needs a pivot, or is saturated>",
+                "executive_verdict": "<8-9 candid sentences summarizing if this is a viable opportunity, needs a pivot, or is saturated>",
                 "aggregate_score": <integer 0-100 based on overall viability>,
                 "dimensional_scores": {{
-                    "pain_point_severity": {{"score": <1-10>, "rationale": "<1-2 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
-                    "market_timing_and_size": {{"score": <1-10>, "rationale": "<1-2 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
-                    "competitive_defensibility": {{"score": <1-10>, "rationale": "<1-2 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
-                    "monetization_viability": {{"score": <1-10>, "rationale": "<1-2 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
-                    "landscape_saturation": {{"score": <1-10>, "rationale": "<1-2 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
-                    "execution_feasibility": {{"score": <1-10>, "rationale": "<1-2 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}}
+                    "pain_point_severity": {{"score": <1-10>, "rationale": "<4-5 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
+                    "market_timing_and_size": {{"score": <1-10>, "rationale": "<4-5 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
+                    "competitive_defensibility": {{"score": <1-10>, "rationale": "<4-5 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
+                    "monetization_viability": {{"score": <1-10>, "rationale": "<4-5 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
+                    "landscape_saturation": {{"score": <1-10>, "rationale": "<4-5 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
+                    "execution_feasibility": {{"score": <1-10>, "rationale": "<4-5 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}}
                 }},
                 "competitive_landscape": [
                     {{"name": "<Competitor Name>", "description": "<What they do>", "threat_level": "<High/Medium/Low>"}}
                 ],
                 "critical_vulnerabilities": [
                     "<String detailing top risk 1>",
-                    "<String detailing top risk 2>"
+                    "<String detailing top risk 2>",
+                    "<String detailing top risk 3>",
+                    "<String detailing top risk 4>"
                 ],
                 "actionable_next_steps": [
                     "<Stage-appropriate milestone 1>",
                     "<Stage-appropriate milestone 2>",
-                    "<Stage-appropriate milestone 3>"
-                ],
-                "evidentiary_sources": [
-                    "<Extract relevant URLs from the market data block that heavily influenced this report>"
+                    "<Stage-appropriate milestone 3>",
+                    "<Stage-appropriate milestone 4>",
+                    "<Stage-appropriate milestone 5>"
                 ]
             }}
             """
@@ -374,7 +381,7 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
             logger.debug(f"[_handle_validate_summary] Invoking LLM for summary generation.")
 
             # 5. Call the LLM
-            response = await llm.call(_SYSTEM_SUMMARY, user_prompt)
+            response = llm.call(_SYSTEM_SUMMARY, user_prompt)
 
             # 6. Parse JSON safely
             cleaned = re.sub(r"```json\s*|```\s*", "", response).strip()
@@ -386,6 +393,9 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 logger.error(f"[_handle_validate_summary] Failed to parse JSON summary. Raw output:\n{response}")
                 return await _fail_record(query_id, f"Failed to parse LLM summary JSON: {json_err}")
 
+            # Extract the top 5 URLs directly from the database sources we fetched earlier
+            extracted_urls = [src.url for src in sources[:5]]
+
             # 7. Persist to ValidateScoreSummary Table
             summary_record = ValidateScoreSummary(
                 query_id=query_id,
@@ -395,7 +405,7 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 competitive_landscape=parsed_data.get("competitive_landscape", []),
                 critical_vulnerabilities=parsed_data.get("critical_vulnerabilities", []),
                 actionable_next_steps=parsed_data.get("actionable_next_steps", []),
-                evidentiary_sources=parsed_data.get("evidentiary_sources", []),
+                evidentiary_sources=extracted_urls, # Injected safely using strict Python list parsing
                 meta={
                     "provider": settings.LLM_PROVIDER,
                     "model": settings.LLM_MODEL,
