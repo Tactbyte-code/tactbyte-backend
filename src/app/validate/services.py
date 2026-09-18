@@ -26,6 +26,21 @@ async def _get_query_or_404(query_id: UUID, user_id: int, db: AsyncSession) -> V
         raise HTTPException(status_code=404, detail="Query not found")
     return record
 
+async def get_status(query_id: UUID, user_id: int, db: AsyncSession) -> ValidateQuery:
+    result = await db.execute(
+        select(ValidateQuery).where(
+            ValidateQuery.id      == query_id,
+            ValidateQuery.user_id == user_id,
+        )
+    )
+    
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=404, detail="Query not found for the given query id")
+    
+    status=record.status
+    return status
+
 # ------------ business logic functions -------------
 async def raise_validate_query(body: ValidateQueryInput, db: AsyncSession, current_user: User) -> dict:
     result = await db.execute(
@@ -86,10 +101,10 @@ async def generate_context(query_id: UUID, db: AsyncSession, current_user: User)
 
     job_id = await runpod_trigger(str(query_id), service="validate", mode="generate-context")
     record.runpod_job_id = job_id
-    record.start_step(ValidateQueryStatus.VALIDATING)
+    # record.start_step(ValidateQueryStatus.VALIDATING)
     await db.commit()
     logger.info("Context generation triggered", extra={"query_id": str(query_id), "job_id": job_id})
-    return {"id": str(record.id), "status": record.status, "runpod_job_id": job_id}
+    return {"id": str(record.id), "status": "VALIDATING", "runpod_job_id": job_id}
 
 async def trigger_search(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
     record = await _get_query_or_404(query_id, current_user.id, db)
@@ -102,8 +117,7 @@ async def trigger_search(query_id: UUID, db: AsyncSession, current_user: User) -
 
     job_id = await runpod_trigger(str(query_id), service="validate", mode="search")
     record.runpod_job_id = job_id
-    record.start_step(ValidateQueryStatus.SEARCHING)
+    # record.start_step(ValidateQueryStatus.SEARCHING)
     await db.commit()
     logger.info("Search triggered", extra={"query_id": str(query_id), "job_id": job_id})
-    return {"id": str(record.id), "status": record.status, "runpod_job_id": job_id}
-
+    return {"id": str(record.id), "status": "SEARCHING", "runpod_job_id": job_id}
