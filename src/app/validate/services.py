@@ -121,3 +121,19 @@ async def trigger_search(query_id: UUID, db: AsyncSession, current_user: User) -
     await db.commit()
     logger.info("Search triggered", extra={"query_id": str(query_id), "job_id": job_id})
     return {"id": str(record.id), "status": "SEARCHING", "runpod_job_id": job_id}
+
+async def generate_summary(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
+    record = await _get_query_or_404(query_id, current_user.id, db)
+
+    if record.status != ValidateQueryStatus.SEARCH_COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Search must be completed before generating summary, current: {record.status}",
+        )
+
+    job_id = await runpod_trigger(str(query_id), service="validate", mode="summary")
+    record.runpod_job_id = job_id
+    # record.start_step(ValidateQueryStatus.SCORING)
+    await db.commit()
+    logger.info("Summary generation triggered", extra={"query_id": str(query_id), "job_id": job_id})
+    return {"id": str(record.id), "status": "SCORING", "runpod_job_id": job_id}
