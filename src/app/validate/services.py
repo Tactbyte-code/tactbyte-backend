@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.validate.model import ValidateQuery, ValidateQueryStatus
+from src.app.validate.model import ValidateQuery, ValidateQueryStatus, ValidateScoreSummary
 from src.app.onboarding.model import Onboarding
 from src.app.user.model import User
 from src.app.validate.schema import ValidateQueryInput
@@ -137,3 +137,41 @@ async def generate_summary(query_id: UUID, db: AsyncSession, current_user: User)
     await db.commit()
     logger.info("Summary generation triggered", extra={"query_id": str(query_id), "job_id": job_id})
     return {"id": str(record.id), "status": "SCORING", "runpod_job_id": job_id}
+
+async def get_summary(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
+    # 1. Validate ownership and ensure the pipeline is completely finished
+    record = await _get_query_or_404(query_id, current_user.id, db)
+
+    if record.status != ValidateQueryStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Summary generation must be completed before fetching, current: {record.status}",
+        )
+
+    # 2. Fetch the actual summary data from the ValidateScoreSummary table
+    result = await db.execute(
+        select(ValidateScoreSummary).where(ValidateScoreSummary.query_id == query_id)
+    )
+    summary_record = result.scalars().first()
+
+    if not summary_record:
+        raise HTTPException(
+            status_code=404,
+            detail="Score summary not found for this query even though status is COMPLETED. The pipeline may have failed during the final database save."
+        )
+
+    # 3. Return the fully structured UI deliverables
+    return {
+        "id": str(summary_record.id),
+        "query_id": str(summary_record.query_id),
+        "executive_verdict": summary_record.executive_verdict,
+        "aggregate_score": summary_record.aggregate_score,
+        "dimensional_scores": summary_record.dimensional_scores or {},
+        "competitive_landscape": summary_record.competitive_landscape or [],
+        "critical_vulnerabilities": summary_record.critical_vulnerabilities or [],
+        "actionable_next_steps": summary_record.actionable_next_steps or [],
+        "evidentiary_sources": summary_record.evidentiary_sources or [],
+        "meta": summary_record.meta or {},
+        "created_at": summary_record.created_at.isoformat() if summary_record.created_at else None,
+        "updated_at": summary_record.updated_at.isoformat() if summary_record.updated_at else None,
+    }

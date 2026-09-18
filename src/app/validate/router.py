@@ -53,3 +53,12 @@ async def generate_summary(
     current_user: User = Depends(require_user),
 ):
     return await services.generate_summary(query_id, db, current_user)
+
+# ------- get summary -------
+@router.get("/query/{query_id}/summary")
+async def get_summary(
+    query_id: UUID,
+    db: AsyncSession = Depends(session),
+    current_user: User = Depends(require_user),
+):
+    return await services.get_summary(query_id, db, current_user)
