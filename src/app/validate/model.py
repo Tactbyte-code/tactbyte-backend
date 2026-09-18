@@ -15,7 +15,6 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from src.core.database import Base
 from src.app.utils.uuid7 import uuid7
 
-
 class ValidateQueryStatus:
     INITIALIZED      = "INITIALIZED"
     CREATED          = "CREATED"
@@ -27,7 +26,6 @@ class ValidateQueryStatus:
     COMPLETED        = "COMPLETED"
     FAILED           = "FAILED"
 
-
 class ValidateFailureReason:
     VALIDATION_ERROR = "VALIDATION_ERROR"
     SEARCH_ERROR     = "SEARCH_ERROR"
@@ -35,14 +33,12 @@ class ValidateFailureReason:
     TIMEOUT          = "TIMEOUT"
     UNKNOWN          = "UNKNOWN"
 
-
 RECOVERABLE_STEPS = {
     ValidateQueryStatus.VALIDATING: ValidateQueryStatus.CREATED,
     ValidateQueryStatus.SEARCHING:  ValidateQueryStatus.VALIDATING,
     ValidateQueryStatus.SCORING:    ValidateQueryStatus.SEARCHING,
     ValidateQueryStatus.SEARCH_COMPLETED: ValidateQueryStatus.SEARCHING,
 }
-
 
 class ValidateQuery(Base):
     __tablename__ = "validate_queries"
@@ -176,17 +172,29 @@ class ValidateScoreSummary(Base):
         index=True,
     )
 
-    search_query      = Column(Text,    nullable=False)
-    analyzed_at       = Column(Text,    nullable=True)
-    direct_answer     = Column(Text,    nullable=True)
-    executive_summary = Column(Text,    nullable=True)
-    overall_sentiment = Column(Text,    nullable=True)
-    total_signals     = Column(Integer, nullable=True)
+    # 1. Executive Verdict (2-3 sentences of candid institutional summary)
+    executive_verdict = Column(Text, nullable=True)
+    
+    # 2. Aggregate Conviction Score (0-100 master score)
+    aggregate_score = Column(Integer, nullable=True)
 
-    quantitative_scores   = Column(JSONB, nullable=True)
-    defensibility_vectors = Column(JSONB, nullable=True)
+    # 3. Dimensional Scores (JSONB array of the 6 parameters: score, rationale, signal_strength)
+    dimensional_scores = Column(JSONB, nullable=True)
+
+    # 4. Competitive Landscape (JSONB array: competitor name, description, threat_level)
+    competitive_landscape = Column(JSONB, nullable=True)
+
+    # 5. Critical Vulnerabilities (JSONB array of strings detailing the top risks)
+    critical_vulnerabilities = Column(JSONB, nullable=True)
+
+    # 6. Actionable Next Steps (JSONB array of strings for the founder)
     actionable_next_steps = Column(JSONB, nullable=True)
-    meta                  = Column(JSONB, nullable=True)
+
+    # 7. Evidentiary Sources (JSONB array of URLs used to ground the analysis)
+    evidentiary_sources = Column(JSONB, nullable=True)
+
+    # Metadata (For LLM token usage, provider info, etc.)
+    meta = Column(JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
