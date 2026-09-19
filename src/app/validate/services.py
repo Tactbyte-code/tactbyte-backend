@@ -1,5 +1,6 @@
 import logging
 from uuid import UUID
+from typing import List, Dict, Any
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -175,3 +176,28 @@ async def get_summary(query_id: UUID, db: AsyncSession, current_user: User) -> d
         "created_at": summary_record.created_at.isoformat() if summary_record.created_at else None,
         "updated_at": summary_record.updated_at.isoformat() if summary_record.updated_at else None,
     }
+
+async def get_queries(user_id: str, db: AsyncSession) -> List[Dict[str, Any]]:
+    """
+    Fetches all validation queries for a specific user, ordered by the newest first.
+    """
+    # 1. Execute the query
+    result = await db.execute(
+        select(ValidateQuery)
+        .where(ValidateQuery.user_id == user_id)
+        .order_by(ValidateQuery.created_at.desc())
+    )
+    
+    # 2. Extract all records
+    records = result.scalars().all()
+
+    # 3. Serialize and return as a list of dictionaries for the FastAPI JSON response
+    return [
+        {
+            "id": str(record.id),
+            "title": record.title,
+            "status": record.status,
+            "created_at": record.created_at.isoformat() if record.created_at else None,
+        }
+        for record in records
+    ]
