@@ -62,3 +62,11 @@ async def get_summary(
     current_user: User = Depends(require_user),
 ):
     return await services.get_summary(query_id, db, current_user)
+
+# ------- get queries -------
+@router.get("/query")
+async def get_queries(
+    db: AsyncSession = Depends(session),
+    current_user: User = Depends(require_user),
+):
+    return await services.get_queries(current_user.id, db)
