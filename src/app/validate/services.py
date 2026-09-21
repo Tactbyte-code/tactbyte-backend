@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.validate.model import ValidateQuery, ValidateQueryStatus, ValidateScoreSummary
+from src.app.validate.model import ValidateQuery, ValidateQueryStatus, ValidateScoreSummary, ValidateMarketSource
 from src.app.onboarding.model import Onboarding
 from src.app.user.model import User
 from src.app.validate.schema import ValidateQueryInput
@@ -160,11 +160,30 @@ async def get_summary(query_id: UUID, db: AsyncSession, current_user: User) -> d
             status_code=404,
             detail="Score summary not found for this query even though status is COMPLETED. The pipeline may have failed during the final database save."
         )
+    
+    # 3. Dynamically fetch the approved sources directly from the database
+    sources_result = await db.execute(
+        select(ValidateMarketSource)
+        .where(ValidateMarketSource.query_id == query_id)
+        .where(ValidateMarketSource.user_approved.is_(True))
+    )
+    sources = sources_result.scalars().all()
 
-    # 3. Return the fully structured UI deliverables
+    # Format the sources exactly as the UI expects them
+    all_sources_data = [
+        {"title": src.title, "url": src.url, "snippet": src.snippet} 
+        for src in sources
+    ]
+
+    # 4. Return the fully structured UI deliverables
     return {
         "id": str(summary_record.id),
         "query_id": str(summary_record.query_id),
+        # Base Venture Details (From ValidateQuery)
+        "title": record.title,
+        "description": record.description,
+        "industry": record.industry,
+        "stage": record.stage,
         "executive_verdict": summary_record.executive_verdict,
         "aggregate_score": summary_record.aggregate_score,
         "dimensional_scores": summary_record.dimensional_scores or {},
@@ -172,6 +191,7 @@ async def get_summary(query_id: UUID, db: AsyncSession, current_user: User) -> d
         "critical_vulnerabilities": summary_record.critical_vulnerabilities or [],
         "actionable_next_steps": summary_record.actionable_next_steps or [],
         "evidentiary_sources": summary_record.evidentiary_sources or [],
+        "all_sources": all_sources_data,
         "meta": summary_record.meta or {},
         "created_at": summary_record.created_at.isoformat() if summary_record.created_at else None,
         "updated_at": summary_record.updated_at.isoformat() if summary_record.updated_at else None,
