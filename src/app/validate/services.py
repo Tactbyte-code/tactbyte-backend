@@ -162,18 +162,18 @@ async def get_summary(query_id: UUID, db: AsyncSession, current_user: User) -> d
         )
     
     # 3. Dynamically fetch the approved sources directly from the database
-    sources_result = await db.execute(
-        select(ValidateMarketSource)
-        .where(ValidateMarketSource.query_id == query_id)
-        .where(ValidateMarketSource.user_approved.is_(True))
-    )
-    sources = sources_result.scalars().all()
+    # sources_result = await db.execute(
+    #     select(ValidateMarketSource)
+    #     .where(ValidateMarketSource.query_id == query_id)
+    #     .where(ValidateMarketSource.user_approved.is_(True))
+    # )
+    # sources = sources_result.scalars().all()
 
-    # Format the sources exactly as the UI expects them
-    all_sources_data = [
-        {"title": src.title, "url": src.url, "snippet": src.snippet} 
-        for src in sources
-    ]
+    # # Format the sources exactly as the UI expects them
+    # all_sources_data = [
+    #     {"title": src.title, "url": src.url, "snippet": src.snippet} 
+    #     for src in sources
+    # ]
 
     # 4. Return the fully structured UI deliverables
     return {
@@ -191,7 +191,7 @@ async def get_summary(query_id: UUID, db: AsyncSession, current_user: User) -> d
         "critical_vulnerabilities": summary_record.critical_vulnerabilities or [],
         "actionable_next_steps": summary_record.actionable_next_steps or [],
         "evidentiary_sources": summary_record.evidentiary_sources or [],
-        "all_sources": all_sources_data,
+        # "all_sources": all_sources_data,
         "meta": summary_record.meta or {},
         "created_at": summary_record.created_at.isoformat() if summary_record.created_at else None,
         "updated_at": summary_record.updated_at.isoformat() if summary_record.updated_at else None,

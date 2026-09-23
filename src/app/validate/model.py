@@ -145,17 +145,17 @@ class ValidateMarketSource(Base):
     search_query = Column(Text,        nullable=False)
     title        = Column(Text,        nullable=False)
     url          = Column(Text,        nullable=False, index=True)
-    snippet      = Column(Text,        nullable=True)
-    doc_id       = Column(String(255), nullable=True)
+    # snippet      = Column(Text,        nullable=True)
+    # doc_id       = Column(String(255), nullable=True)
 
-    source_title    = Column(Text,                    nullable=True)
-    source_content  = Column(Text,                    nullable=True)
-    source_author   = Column(String(255),             nullable=True)
-    source_metadata = Column(JSONB,                   nullable=True)
-    fetch_ok        = Column(Boolean,                 nullable=True)
-    fetched_at      = Column(DateTime(timezone=True), nullable=True)
+    # source_title    = Column(Text,                    nullable=True)
+    # source_content  = Column(Text,                    nullable=True)
+    # source_author   = Column(String(255),             nullable=True)
+    # source_metadata = Column(JSONB,                   nullable=True)
+    # fetch_ok        = Column(Boolean,                 nullable=True)
+    # fetched_at      = Column(DateTime(timezone=True), nullable=True)
 
-    user_approved = Column(Boolean, default=False, nullable=True)
+    # user_approved = Column(Boolean, default=False, nullable=True)
     created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
@@ -192,6 +192,9 @@ class ValidateScoreSummary(Base):
 
     # 7. Evidentiary Sources (JSONB array of URLs used to ground the analysis)
     evidentiary_sources = Column(JSONB, nullable=True)
+    
+    # 8. All Sources (JSONB array of URLs used to ground the analysis)
+    all_sources = Column(JSONB, nullable=True)
 
     # Metadata (For LLM token usage, provider info, etc.)
     meta = Column(JSONB, nullable=True)
