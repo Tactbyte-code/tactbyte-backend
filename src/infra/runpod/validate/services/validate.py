@@ -4,6 +4,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 from sqlalchemy.future import select
+import aiohttp
+from bs4 import BeautifulSoup
 
 from src.core.settings import settings
 from src.core.database import AsyncSessionLocal
@@ -47,6 +49,25 @@ async def _fail_record(query_id: str, reason: str) -> dict[str, Any]:
     except Exception as e:
         logger.error(f"Failed to update record status to FAILED: {e}")
     return {"statusCode": 500, "error": reason}
+
+async def fetch_page_text(url: str, max_words: int = 800) -> str:
+    """Fetches a URL and extracts the core readable text."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=5) as response:
+                if response.status != 200:
+                    return ""
+                html = await response.text()
+                soup = BeautifulSoup(html, "html.parser")
+                # Strip out scripts, styles, and nav bars
+                for script in soup(["script", "style", "nav", "footer"]):
+                    script.extract()
+                text = soup.get_text(separator=" ", strip=True)
+                # Truncate to save LLM tokens
+                words = text.split()[:max_words]
+                return " ".join(words)
+    except Exception:
+        return "" # Fail silently for bad URLs
 
 # ----------- business logic functions -------------
 async def _handle_validate_generate_context(query_id: str) -> ValidateQueryContext:
@@ -188,13 +209,6 @@ async def _handle_validate_search(query_id: str) -> dict[str, Any]:
 
         queries = context_record.market_signals
 
-        # query_result = await db.execute(select(ValidateQuery).where(ValidateQuery.id == query_id))
-        # query_record = query_result.scalars().first()
-        # if query_record:
-        #     query_record.start_step(ValidateQueryStatus.SEARCHING)
-        #     await db.commit()
-        #     logger.info(f"[VALIDATE][SEARCH] Query {query_id} status transitioned to SEARCHING.")
-
     # 2. Execute Vertex AI Search
     logger.info(f"[VALIDATE][SEARCH] Starting Vertex AI Search with {len(queries)} queries.")
     try:
@@ -239,10 +253,7 @@ async def _handle_validate_search(query_id: str) -> dict[str, Any]:
                     query_id=query_id,
                     search_query=search_query,
                     title=r.get("title", ""),
-                    url=url,
-                    snippet=r.get("snippet", ""),
-                    doc_id=r.get("doc_id", ""),
-                    user_approved=persisted_count < 10,
+                    url=url
                 )
                 session.add(market_source)
                 persisted_count += 1
@@ -279,11 +290,11 @@ async def _handle_validate_search(query_id: str) -> dict[str, Any]:
 # =====================================================================
 async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
     """
-    Step 4: Fetches the venture details and scraped Vertex AI market data,
-    invokes the LLM to generate a comprehensive institutional scorecard, 
+    Step 4: Fetches the venture details, scrapes market URLs in batches,
+    extracts concrete facts (Map), synthesizes a final scorecard (Reduce), 
     and saves it to ValidateScoreSummary.
     """
-    logger.info(f"[_handle_validate_summary] Starting final summarization for Query ID: {query_id}")
+    logger.info(f"[_handle_validate_summary] Starting Map-Reduce summarization for Query ID: {query_id}")
 
     async with AsyncSessionLocal() as db:
         try:
@@ -298,27 +309,14 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
             await db.commit()
             logger.info(f"[VALIDATE][SUMMARY] Query {query_id} status transitioned to SCORING.")
 
-            # 2. Fetch the market search data (top 15 approved sources)
+            # 2. Fetch ALL market search data (user_approved constraint removed, snippet removed)
             sources_result = await db.execute(
                 select(ValidateMarketSource)
                 .where(ValidateMarketSource.query_id == query_id)
-                .where(ValidateMarketSource.user_approved == True)
             )
             sources = sources_result.scalars().all()
-
-           # Format the sources into a readable string block for the LLM
-            market_data_block = ""
-            for i, src in enumerate(sources):
-                market_data_block += f"[{i+1}] URL: {src.url}\nTitle: {src.title}\nInsight/Snippet: {src.snippet}\n\n"
             
-            # --- NEW LOGGING ADDED HERE ---
             logger.info(f"[_handle_validate_summary] Extracted {len(sources)} sources for Query ID {query_id}.")
-            logger.debug(f"[_handle_validate_summary] market_data_block content preview (first 500 chars):\n{market_data_block[:500]}")
-            # ------------------------------
-            
-            if not market_data_block.strip():
-                logger.warning(f"[_handle_validate_summary] market_data_block is completely EMPTY for Query ID {query_id}!")
-                market_data_block = "No external market data found. Rely on general industry knowledge."
 
             # 3. Initialize LLM
             llm = get_client(
@@ -329,10 +327,62 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 max_tokens=8000, 
             )
 
-            # 4. Construct the summary prompt enforcing the strict schema
-            # REMOVED evidentiary_sources from the prompt so the LLM doesn't have to guess or copy URLs.
-            user_prompt = f"""
-            Synthesize a comprehensive institutional validation report based on the following venture details and the raw market data provided below.
+            # ==========================================================
+            # THE "MAP" PHASE: Batch Scraping & Fact Extraction
+            # ==========================================================
+            batch_size = 5
+            source_batches = [sources[i:i + batch_size] for i in range(0, len(sources), batch_size)]
+            
+            extracted_market_facts = ""
+            total_batches = len(source_batches)
+
+            for index, batch in enumerate(source_batches):
+                batch_num = index + 1
+                
+                # --- BATCH START LOG ---
+                logger.info(f"[_handle_validate_summary] [MAP PHASE] Starting extraction for Batch {batch_num}/{total_batches} ({len(batch)} URLs).")
+                
+                batch_text_block = ""
+                for src in batch:
+                    # Scrape the actual text of the website in memory
+                    page_content = await fetch_page_text(src.url)
+                    if page_content:
+                        batch_text_block += f"Source: {src.title}\nURL: {src.url}\nContent: {page_content}\n\n"
+
+                if not batch_text_block:
+                    logger.warning(f"[_handle_validate_summary] [MAP PHASE] Batch {batch_num}/{total_batches} yielded no readable content. Skipping extraction.")
+                    continue
+
+                extraction_prompt = f"""
+                Extract the hard facts from the following raw market data regarding this venture: {query_record.title} ({query_record.industry}).
+                Identify: Market Size metrics, Competitor Names, Pricing Data, and specific Customer Pain Points.
+                Keep it strictly to bullet points. Do not invent data. If no relevant data exists in this batch, output "No relevant facts found."
+                
+                RAW BATCH DATA:
+                {batch_text_block}
+                """
+                
+                logger.debug(f"[_handle_validate_summary] [MAP PHASE] Invoking LLM fact extraction for Batch {batch_num}/{total_batches}...")
+                
+                # Note: llm.call is synchronous
+                batch_facts = llm.call(_SYSTEM_SUMMARY, extraction_prompt)
+                extracted_market_facts += f"\n--- Batch {batch_num} Facts ---\n{batch_facts}\n"
+
+                # --- BATCH END LOG ---
+                logger.info(f"[_handle_validate_summary] [MAP PHASE] Successfully extracted facts for Batch {batch_num}/{total_batches}.")
+
+
+            # ==========================================================
+            # THE "REDUCE" PHASE: Final Scoring based on Extracted Facts
+            # ==========================================================
+            if not extracted_market_facts.strip() or "No relevant facts found." in extracted_market_facts:
+                logger.warning(f"[_handle_validate_summary] No facts extracted for Query ID {query_id} across all batches!")
+                extracted_market_facts = "No concrete external market data found. Rely on general industry knowledge."
+
+            logger.debug(f"[_handle_validate_summary] Consolidated Market Facts Preview:\n{extracted_market_facts[:1000]}...")
+
+            final_user_prompt = f"""
+            Synthesize a comprehensive institutional validation report based on the following venture details and the extracted market facts.
 
             --- VENTURE DETAILS ---
             Title: {query_record.title}
@@ -340,13 +390,13 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
             Industry: {query_record.industry}
             Stage: {query_record.stage}
 
-            --- RAW MARKET DATA SCRAPED ---
-            {market_data_block}
+            --- EXTRACTED MARKET FACTS ---
+            {extracted_market_facts}
 
             --- REQUIRED OUTPUT FORMAT ---
             You must output ONLY a raw JSON object matching the exact schema below. Do not add conversational text. 
             Evaluate the 6 dimensional scores critically on a scale of 1-10.
-            Set 'signal_strength' to High, Medium, or Low based on how much concrete proof you found in the RAW MARKET DATA.
+            Set 'signal_strength' to High, Medium, or Low based on how much concrete proof you found in the EXTRACTED MARKET FACTS.
 
             {{
                 "executive_verdict": "<8-9 candid sentences summarizing if this is a viable opportunity, needs a pivot, or is saturated>",
@@ -378,23 +428,28 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
             }}
             """
 
-            logger.debug(f"[_handle_validate_summary] Invoking LLM for summary generation.")
-
-            # 5. Call the LLM
-            response = llm.call(_SYSTEM_SUMMARY, user_prompt)
+            logger.info(f"[_handle_validate_summary] Invoking LLM for final REDUCE summary generation.")
+            final_response = llm.call(_SYSTEM_SUMMARY, final_user_prompt)
 
             # 6. Parse JSON safely
-            cleaned = re.sub(r"```json\s*|```\s*", "", response).strip()
+            cleaned = re.sub(r"```json\s*|```\s*", "", final_response).strip()
             cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL).strip()
 
             try:
                 parsed_data = json.loads(cleaned)
             except json.JSONDecodeError as json_err:
-                logger.error(f"[_handle_validate_summary] Failed to parse JSON summary. Raw output:\n{response}")
+                logger.error(f"[_handle_validate_summary] Failed to parse JSON summary. Raw output:\n{final_response}")
                 return await _fail_record(query_id, f"Failed to parse LLM summary JSON: {json_err}")
 
-            # Extract the top 5 URLs directly from the database sources we fetched earlier
-            extracted_urls = [src.url for src in sources[:5]]
+            # Extract URLs for UI payloads
+            extracted_urls = [src.url for src in sources]
+            
+            # 7. Persist to ValidateScoreSummary Table (Upsert pattern to prevent UniqueViolationError)
+            # summary_result = await db.execute(select(ValidateScoreSummary).where(ValidateScoreSummary.query_id == query_id))
+            # summary_record = summary_result.scalars().first()
+
+            # Prepare the all_sources list (just title and url, snippet removed)
+            all_sources_data = [{"title": src.title, "url": src.url} for src in sources]
 
             # 7. Persist to ValidateScoreSummary Table
             summary_record = ValidateScoreSummary(
@@ -405,7 +460,8 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 competitive_landscape=parsed_data.get("competitive_landscape", []),
                 critical_vulnerabilities=parsed_data.get("critical_vulnerabilities", []),
                 actionable_next_steps=parsed_data.get("actionable_next_steps", []),
-                evidentiary_sources=extracted_urls, # Injected safely using strict Python list parsing
+                evidentiary_sources=extracted_urls, # Top 5 for main UI reference
+                all_sources=all_sources_data, # all sources for UI display
                 meta={
                     "provider": settings.LLM_PROVIDER,
                     "model": settings.LLM_MODEL,

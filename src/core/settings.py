@@ -36,6 +36,9 @@ class Settings(BaseSettings):
 
     SUPABASE_URL: str
     SUPABASE_KEY: str
+    
+    # jina reader api key
+    # JINA_API_KEY: str
 
     # Google Vertex AI
     DISCOVERY_PROJECT_ID: str

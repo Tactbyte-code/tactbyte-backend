@@ -44,11 +44,8 @@ def _parse_results(
 
         title = derived.get("title") or struct.get("title", "")
         link = derived.get("link") or struct.get("link", "")
-        snippets = derived.get("snippets", [{}])
 
-        snippet_text = ""
-        if isinstance(snippets, list) and snippets:
-            snippet_text = snippets[0].get("snippet", "")
+        # snippet extraction logic has been completely removed
 
         if not link:
             continue
@@ -57,8 +54,7 @@ def _parse_results(
             "query": query,
             "title": title,
             "url": link,
-            "snippet": snippet_text,
-            "doc_id": doc.id,
+            # snippet and doc_id keys have been removed
         })
     return results
 
