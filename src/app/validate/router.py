@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from src.core.database import session
@@ -68,5 +68,13 @@ async def get_summary(
 async def get_queries(
     db: AsyncSession = Depends(session),
     current_user: User = Depends(require_user),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Number of items per page")
 ):
-    return await services.get_queries(current_user.id, db)
+    # Pass the pagination parameters to your service function
+    return await services.get_queries(
+        user_id=current_user.id, 
+        db=db, 
+        page=page, 
+        page_size=page_size
+    )

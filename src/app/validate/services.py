@@ -1,9 +1,10 @@
 import logging
+import math
 from uuid import UUID
 from typing import List, Dict, Any
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.validate.model import ValidateQuery, ValidateQueryStatus, ValidateScoreSummary, ValidateMarketSource
@@ -197,22 +198,37 @@ async def get_summary(query_id: UUID, db: AsyncSession, current_user: User) -> d
         "updated_at": summary_record.updated_at.isoformat() if summary_record.updated_at else None,
     }
 
-async def get_queries(user_id: str, db: AsyncSession) -> List[Dict[str, Any]]:
+async def get_queries(
+    user_id: str, 
+    db: AsyncSession, 
+    page: int = 1, 
+    page_size: int = 10
+) -> Dict[str, Any]:
     """
-    Fetches all validation queries for a specific user, ordered by the newest first.
+    Fetches paginated validation queries for a specific user, ordered by the newest first.
     """
-    # 1. Execute the query
+    # 1. Calculate the offset based on the requested page
+    offset = (page - 1) * page_size
+
+    # 2. Query for the total count of records (essential for frontend pagination controls)
+    count_query = select(func.count()).select_from(ValidateQuery).where(ValidateQuery.user_id == user_id)
+    total_result = await db.execute(count_query)
+    total_count = total_result.scalar() or 0
+
+    # 3. Execute the paginated query
     result = await db.execute(
         select(ValidateQuery)
         .where(ValidateQuery.user_id == user_id)
         .order_by(ValidateQuery.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
     )
     
-    # 2. Extract all records
+    # 4. Extract all records for the current page
     records = result.scalars().all()
 
-    # 3. Serialize and return as a list of dictionaries for the FastAPI JSON response
-    return [
+    # 5. Serialize the data
+    items = [
         {
             "id": str(record.id),
             "title": record.title,
@@ -221,3 +237,12 @@ async def get_queries(user_id: str, db: AsyncSession) -> List[Dict[str, Any]]:
         }
         for record in records
     ]
+
+    # 6. Return a structured dictionary containing the items and pagination metadata
+    return {
+        "items": items,
+        "total": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": math.ceil(total_count / page_size) if total_count > 0 else 1
+    }
