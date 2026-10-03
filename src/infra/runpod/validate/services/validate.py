@@ -355,8 +355,16 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
 
                 extraction_prompt = f"""
                 Extract the hard facts from the following raw market data regarding this venture: {query_record.title} ({query_record.industry}).
-                Identify: Market Size metrics, Competitor Names, Pricing Data, and specific Customer Pain Points.
-                Keep it strictly to bullet points. Do not invent data. If no relevant data exists in this batch, output "No relevant facts found."
+                
+                CRITICAL INSTRUCTION: You must aggressively hunt for and extract exact numbers, statistics, percentages, and dollar amounts. Do not summarize a number (e.g. say "$45.5B", not "a large market").
+                
+                Identify:
+                - Exact Market Size & Growth metrics (e.g., $X Billion, Y% CAGR)
+                - Competitor Names & their scale (e.g., funding rounds, user counts)
+                - Exact Pricing Data (e.g., $20/mo, 2.5% transaction fee)
+                - Quantifiable Customer Pain Points (e.g., "takes 4 hours", "loses 15% revenue")
+                
+                Keep it strictly to bullet points. Do not invent data. If no relevant data exists in this batch, output exactly "NO_FACTS".
                 
                 RAW BATCH DATA:
                 {batch_text_block}
@@ -398,32 +406,37 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
             Evaluate the 6 dimensional scores critically on a scale of 1-10.
             Set 'signal_strength' to High, Medium, or Low based on how much concrete proof you found in the EXTRACTED MARKET FACTS.
 
+            RULE: You must aggressively inject the hard statistics, dollar amounts, and percentages from the market facts directly into your rationales and competitor descriptions. If exact numbers were extracted, use them.
+
             {{
-                "executive_verdict": "<8-9 candid sentences summarizing if this is a viable opportunity, needs a pivot, or is saturated>",
+                "executive_verdict": "<8-9 candid sentences summarizing if this is a viable opportunity. Include top-level market size or growth stats in the verdict.>",
                 "aggregate_score": <integer 0-100 based on overall viability>,
                 "dimensional_scores": {{
-                    "pain_point_severity": {{"score": <1-10>, "rationale": "<4-5 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
-                    "market_timing_and_size": {{"score": <1-10>, "rationale": "<4-5 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
-                    "competitive_defensibility": {{"score": <1-10>, "rationale": "<4-5 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
-                    "monetization_viability": {{"score": <1-10>, "rationale": "<4-5 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
-                    "landscape_saturation": {{"score": <1-10>, "rationale": "<4-5 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}},
-                    "execution_feasibility": {{"score": <1-10>, "rationale": "<4-5 sentences referencing data>", "signal_strength": "<High/Medium/Low>"}}
+                    "pain_point_severity": {{"score": <1-10>, "rationale": "<4-5 sentences. Include exact hours/dollars lost by customers if available.>", "signal_strength": "<High/Medium/Low>"}},
+                    "market_timing_and_size": {{"score": <1-10>, "rationale": "<4-5 sentences. MUST include exact TAM/SAM metrics and CAGR percentages.>", "signal_strength": "<High/Medium/Low>"}},
+                    "competitive_defensibility": {{"score": <1-10>, "rationale": "<4-5 sentences referencing specific incumbent market share or funding.>", "signal_strength": "<High/Medium/Low>"}},
+                    "monetization_viability": {{"score": <1-10>, "rationale": "<4-5 sentences referencing industry standard pricing or willingness-to-pay stats.>", "signal_strength": "<High/Medium/Low>"}},
+                    "landscape_saturation": {{"score": <1-10>, "rationale": "<4-5 sentences quantifying the number of competitors or market fragmentation.>", "signal_strength": "<High/Medium/Low>"}},
+                    "execution_feasibility": {{"score": <1-10>, "rationale": "<4-5 sentences referencing required capital or technical thresholds.>", "signal_strength": "<High/Medium/Low>"}}
                 }},
                 "competitive_landscape": [
-                    {{"name": "<Competitor Name>", "description": "<What they do>", "threat_level": "<High/Medium/Low>"}}
+                    {{
+                        "name": "<Competitor Name>", 
+                        "description": "<What they do in 1 sentence. Include scale if known (e.g., '1M+ users', '$50M Series B').>", 
+                        "target_segment": "<Who their ideal customer is (e.g., Enterprise, SMB, Solo)>",
+                        "pricing_model": "<Exact pricing tiers (e.g., Freemium + $19/mo, 2.9% + 30¢)>",
+                        "core_weakness": "<Their biggest flaw or top user complaint based on the data>",
+                        "how_to_differentiate": "<1 actionable sentence on how this venture can beat them>",
+                        "threat_level": "<High/Medium/Low>"
+                    }}
                 ],
                 "critical_vulnerabilities": [
                     "<String detailing top risk 1>",
-                    "<String detailing top risk 2>",
-                    "<String detailing top risk 3>",
-                    "<String detailing top risk 4>"
+                    "<String detailing top risk 2>"
                 ],
                 "actionable_next_steps": [
                     "<Stage-appropriate milestone 1>",
-                    "<Stage-appropriate milestone 2>",
-                    "<Stage-appropriate milestone 3>",
-                    "<Stage-appropriate milestone 4>",
-                    "<Stage-appropriate milestone 5>"
+                    "<Stage-appropriate milestone 2>"
                 ]
             }}
             """
