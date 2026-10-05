@@ -1,12 +1,12 @@
 import json
 import logging
+import asyncio
 import re
 from datetime import datetime, timezone
 from typing import Any
 from sqlalchemy.future import select
 import aiohttp
 from bs4 import BeautifulSoup
-
 from src.core.settings import settings
 from src.core.database import AsyncSessionLocal
 from src.app.validate.model import (
@@ -14,7 +14,8 @@ from src.app.validate.model import (
     ValidateQueryContext, 
     ValidateQueryStatus,
     ValidateMarketSource,
-    ValidateScoreSummary
+    ValidateScoreSummary,
+    ValidateSummarySource
 )
 from src.infra.runpod.llm import get_client
 from src.infra.runpod.validate.services.vertex_search import run_vertex_search
@@ -51,26 +52,40 @@ async def _fail_record(query_id: str, reason: str) -> dict[str, Any]:
     return {"statusCode": 500, "error": reason}
 
 async def fetch_page_text(url: str, max_words: int = 800) -> str:
-    """Fetches a URL and extracts the core readable text."""
+    """
+    Fetches a URL and extracts the core readable HTML text on the fly.
+    Uses browser spoofing headers to bypass basic bot protection.
+    """
+    # Standard desktop browser headers to bypass basic Cloudflare/WAF blocks
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+    
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=5) as response:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(url, timeout=10) as response:
                 if response.status != 200:
                     return ""
                 html = await response.text()
+                
                 soup = BeautifulSoup(html, "html.parser")
-                # Strip out scripts, styles, and nav bars
-                for script in soup(["script", "style", "nav", "footer"]):
+                
+                # Strip out non-content elements
+                for script in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
                     script.extract()
+                    
                 text = soup.get_text(separator=" ", strip=True)
-                # Truncate to save LLM tokens
                 words = text.split()[:max_words]
+                
                 return " ".join(words)
-    except Exception:
-        return "" # Fail silently for bad URLs
+    except Exception as e:
+        logger.warning(f"[fetch_page_text] Failed to scrape {url}: {e}")
+        return ""
 
 # ----------- business logic functions -------------
-async def _handle_validate_generate_context(query_id: str) -> ValidateQueryContext:
+async def _handle_validate_generate_context(query_id: str) -> dict[str, Any]:
     """
     Step 2: Parses the venture details from ValidateQuery, invokes the LLM client instance to generate 
     search queries, market signals, NLP anchors, and topic boundaries, and stores 
@@ -90,8 +105,6 @@ async def _handle_validate_generate_context(query_id: str) -> ValidateQueryConte
 
             logger.debug(f"[_handle_validate_generate_context] Retrieved query record: title='{query_record.title}', industry='{query_record.industry}', stage='{query_record.stage}'")
 
-            # Update status to VALIDATING
-            # query_record.start_step(ValidateQueryStatus.VALIDATING)
             await db.commit()
             logger.info(f"[_handle_validate_generate_context] Query {query_id} status transitioned to VALIDATING.")
 
@@ -105,17 +118,28 @@ async def _handle_validate_generate_context(query_id: str) -> ValidateQueryConte
                 max_tokens=settings.LLM_MAX_TOKENS,
             )
 
-            # 3. Build the user prompt (system prompt is passed separately to llm.call())
-            user_prompt = f"""Analyse the following startup venture / feature idea and generate search queries and extraction anchors for market validation.
+            # ==========================================================
+            # THE FIX: Enforcing Rigid Market-Hunting Query Archetypes
+            # ==========================================================
+            user_prompt = f"""Analyse the following startup venture / feature idea and generate strictly structured search queries for market validation.
 
             Title: {query_record.title}
             Description: {query_record.description}
             Industry: {query_record.industry}
             Stage: {query_record.stage}
 
+            CRITICAL INSTRUCTION: Your 'market_signals' MUST NOT be conversational questions (e.g., do not write "what are the pain points of X"). 
+            They must be Google-style advanced search queries designed to find institutional reports, financial data, and pricing.
+            Always use negative keywords like "-quora -reddit -pinterest" to filter out user-generated junk.
+
             Return ONLY this JSON — every field is required:
             {{
-            "market_signals":  ["<targeted search query to find competitors, market size, or customer pain points>", "..."],
+            "market_signals": [
+                "<1. Macro TAM Query: e.g., '{{Industry}} market size OR TAM CAGR 2024 -quora'>",
+                "<2. Competitor Economics Query: e.g., '{{Top Competitor}} revenue OR pricing tiers OR ARR -reddit'>",
+                "<3. Churn/Limitation Query: e.g., '{{Industry}} software limitations OR churn OR alternative -quora'>",
+                "<4. Benchmark Query: e.g., '{{Industry}} SaaS benchmarks CAC LTV retention -reddit'>"
+            ],
             "nlp_anchors":     ["<key technical or domain-specific keyword>", "..."],
             "topic_boundary":  {{
                 "in_scope":       ["<area directly relevant to this venture>"],
@@ -131,7 +155,7 @@ async def _handle_validate_generate_context(query_id: str) -> ValidateQueryConte
 
             logger.debug(f"[_handle_validate_generate_context] Invoking LLM for query {query_id}.")
 
-            # 4. Call LLM — pass system prompt + user prompt (matches LLMClient.call(system, prompt) signature)
+            # 4. Call LLM — pass system prompt + user prompt
             response = llm.call(_SYSTEM_CONTEXT, user_prompt)
 
             logger.debug(f"[_handle_validate_generate_context] Received raw response from LLM (length: {len(response)} chars).")
@@ -173,7 +197,6 @@ async def _handle_validate_generate_context(query_id: str) -> ValidateQueryConte
                 f"for ValidateQuery ID: {query_id}. Generated {len(generated_signals)} search queries."
             )
             
-            # FIX: Return a JSON-serializable dictionary
             return {
                 "statusCode": 200,
                 "message": "Context generated successfully",
@@ -286,13 +309,13 @@ async def _handle_validate_search(query_id: str) -> dict[str, Any]:
     }
 
 # =====================================================================
-# PHASE 4: SUMMARIZATION & SCORING
+# PHASE 4: MAP-REDUCE SUMMARIZATION
 # =====================================================================
 async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
     """
-    Step 4: Fetches the venture details, scrapes market URLs in batches,
-    extracts concrete facts (Map), synthesizes a final scorecard (Reduce), 
-    and saves it to ValidateScoreSummary.
+    Step 4: Fetches the venture details, filters junk domains, saves curated URLs 
+    to ValidateSummarySource, scrapes URLs in parallel batches (Map), 
+    synthesizes a calibrated scorecard (Reduce), and saves to ValidateScoreSummary.
     """
     logger.info(f"[_handle_validate_summary] Starting Map-Reduce summarization for Query ID: {query_id}")
 
@@ -309,15 +332,64 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
             await db.commit()
             logger.info(f"[VALIDATE][SUMMARY] Query {query_id} status transitioned to SCORING.")
 
-            # 2. Fetch ALL market search data (user_approved constraint removed, snippet removed)
+            # 2. Fetch ALL market search data
             sources_result = await db.execute(
                 select(ValidateMarketSource)
                 .where(ValidateMarketSource.query_id == query_id)
             )
             sources = sources_result.scalars().all()
             
-            logger.info(f"[_handle_validate_summary] Extracted {len(sources)} sources for Query ID {query_id}.")
+            logger.info(f"[_handle_validate_summary] Extracted {len(sources)} raw sources from DB.")
 
+            # ==========================================================
+            # PRE-SCRAPE NOISE FILTERING & SAVING TO SUMMARY SOURCES
+            # ==========================================================
+            BANNED_DOMAINS = [
+                "prnewswire.com", 
+                "globenewswire.com", 
+                "businesswire.com", 
+                "medium.com",
+                "yahoo.com",
+                "seekingalpha.com",
+                "crunchbase.com",
+                # New SEO/UGC junk to block:
+                "quora.com",
+                "reddit.com",
+                "forbes.com/sites", # Forbes contributor network is mostly garbage
+                "techcrunch.com"    # Usually just funding announcements, not TAM/metrics
+            ]
+            BANNED_EXTENSIONS = [".pdf", ".ppt", ".pptx", ".doc", ".docx"]
+
+            clean_sources = []
+            for src in sources:
+                url_lower = src.url.lower()
+                
+                # Reject PDFs/documents and press release mills
+                if any(url_lower.endswith(ext) or f"{ext}?" in url_lower for ext in BANNED_EXTENSIONS):
+                    continue
+                if any(domain in url_lower for domain in BANNED_DOMAINS):
+                    continue
+                    
+                clean_sources.append(src)
+
+            # Take only the top 15 clean sources for maximum relevance
+            sources = clean_sources[:15] 
+            
+            logger.info(f"[_handle_validate_summary] Filtered down to {len(sources)} clean sources. Persisting to ValidateSummarySource...")
+
+            # Persist these chosen URLs to ValidateSummarySource
+            for i, src in enumerate(sources):
+                summary_source = ValidateSummarySource(
+                    query_id=query_id,
+                    title=src.title,
+                    url=src.url,
+                    scrape_order=i
+                )
+                db.add(summary_source)
+            
+            # Commit the insertion of Summary Sources before moving to LLM phase
+            await db.commit()
+            
             # 3. Initialize LLM
             llm = get_client(
                 provider=settings.LLM_PROVIDER,
@@ -328,7 +400,7 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
             )
 
             # ==========================================================
-            # THE "MAP" PHASE: Batch Scraping & Fact Extraction
+            # THE "MAP" PHASE: Parallel Batch Scraping & Fact Extraction
             # ==========================================================
             batch_size = 5
             source_batches = [sources[i:i + batch_size] for i in range(0, len(sources), batch_size)]
@@ -336,18 +408,31 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
             extracted_market_facts = ""
             total_batches = len(source_batches)
 
+            # --- THE FIX: Create a safe wrapper to guarantee strings are returned ---
+            async def safe_fetch(url: str) -> str:
+                try:
+                    result = await fetch_page_text(url)
+                    # Ensure we always return a string
+                    return result if isinstance(result, str) else ""
+                except Exception as e:
+                    logger.warning(f"[_handle_validate_summary] safe_fetch failed for {url}: {e}")
+                    return ""
+            # ------------------------------------------------------------------------
+
             for index, batch in enumerate(source_batches):
                 batch_num = index + 1
-                
-                # --- BATCH START LOG ---
                 logger.info(f"[_handle_validate_summary] [MAP PHASE] Starting extraction for Batch {batch_num}/{total_batches} ({len(batch)} URLs).")
                 
+                # Run the scraper asynchronously for all 5 URLs
+                scrape_tasks = [safe_fetch(src.url) for src in batch]
+                
+                # We can remove return_exceptions=True because safe_fetch catches everything
+                scraped_contents = await asyncio.gather(*scrape_tasks)
+
                 batch_text_block = ""
-                for src in batch:
-                    # Scrape the actual text of the website in memory
-                    page_content = await fetch_page_text(src.url)
-                    if page_content:
-                        batch_text_block += f"Source: {src.title}\nURL: {src.url}\nContent: {page_content}\n\n"
+                for src, content in zip(batch, scraped_contents):
+                    if content and content.strip():
+                        batch_text_block += f"Source: {src.title}\nURL: {src.url}\nContent: {content}\n\n"
 
                 if not batch_text_block:
                     logger.warning(f"[_handle_validate_summary] [MAP PHASE] Batch {batch_num}/{total_batches} yielded no readable content. Skipping extraction.")
@@ -372,18 +457,20 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 
                 logger.debug(f"[_handle_validate_summary] [MAP PHASE] Invoking LLM fact extraction for Batch {batch_num}/{total_batches}...")
                 
-                # Note: llm.call is synchronous
-                batch_facts = llm.call(_SYSTEM_SUMMARY, extraction_prompt)
-                extracted_market_facts += f"\n--- Batch {batch_num} Facts ---\n{batch_facts}\n"
-
-                # --- BATCH END LOG ---
-                logger.info(f"[_handle_validate_summary] [MAP PHASE] Successfully extracted facts for Batch {batch_num}/{total_batches}.")
+                batch_facts = llm.call(_SYSTEM_SUMMARY, extraction_prompt).strip()
+                
+                if batch_facts and "NO_FACTS" not in batch_facts:
+                    extracted_market_facts += f"\n--- Batch {batch_num} Facts ---\n{batch_facts}\n"
+                    logger.info(f"[_handle_validate_summary] [MAP PHASE] Successfully extracted facts for Batch {batch_num}/{total_batches}.")
+                else:
+                    logger.info(f"[_handle_validate_summary] [MAP PHASE] LLM found no relevant facts in Batch {batch_num}/{total_batches}.")
 
 
             # ==========================================================
             # THE "REDUCE" PHASE: Final Scoring based on Extracted Facts
             # ==========================================================
-            if not extracted_market_facts.strip() or "No relevant facts found." in extracted_market_facts:
+            # LOGIC BUG FIXED: Direct empty string check
+            if not extracted_market_facts.strip():
                 logger.warning(f"[_handle_validate_summary] No facts extracted for Query ID {query_id} across all batches!")
                 extracted_market_facts = "No concrete external market data found. Rely on general industry knowledge."
 
@@ -401,16 +488,26 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
             --- EXTRACTED MARKET FACTS ---
             {extracted_market_facts}
 
+            --- SCORING CALIBRATION RULES (CRITICAL) ---
+            Do not cluster scores in the middle (4-6) defensively. Use the full 1-10 scale based on this exact rubric:
+            - 1-3: Fatal flaw. Saturated market, free competitors, or massive execution barriers.
+            - 4-6: Average venture. Standard competition, proven but competitive market size.
+            - 7-8: Strong signal. Clear differentiator, growing TAM, or highly fragmented weak incumbents.
+            - 9-10: Exceptional. Monopolistic potential, desperate customer pain point with no clear solution.
+            
+            If the data proves the market is growing and competitors are flawed, you MUST award scores of 7+. Do not penalize the idea just because it is early-stage.
+
             --- REQUIRED OUTPUT FORMAT ---
             You must output ONLY a raw JSON object matching the exact schema below. Do not add conversational text. 
             Evaluate the 6 dimensional scores critically on a scale of 1-10.
             Set 'signal_strength' to High, Medium, or Low based on how much concrete proof you found in the EXTRACTED MARKET FACTS.
 
-            RULE: You must aggressively inject the hard statistics, dollar amounts, and percentages from the market facts directly into your rationales and competitor descriptions. If exact numbers were extracted, use them.
+            RULE 1: You must aggressively inject the hard statistics, dollar amounts, and percentages from the market facts directly into your rationales.
+            RULE 2: If the extracted market facts are sparse, rely on logical deduction and industry benchmarks. DO NOT penalize the venture with low scores (3-5) just because the provided data block was short.
 
             {{
-                "executive_verdict": "<8-9 candid sentences summarizing if this is a viable opportunity. Include top-level market size or growth stats in the verdict.>",
-                "aggregate_score": <integer 0-100 based on overall viability>,
+                "executive_verdict": "<8-9 candid sentences summarizing if this is a viable opportunity. Include top-level market size stats.>",
+                "aggregate_score": <MUST be the exact mathematical sum of your 6 dimensional scores divided by 60, then multiplied by 100. (e.g., if dimensions sum to 42, score is 70)>,
                 "dimensional_scores": {{
                     "pain_point_severity": {{"score": <1-10>, "rationale": "<4-5 sentences. Include exact hours/dollars lost by customers if available.>", "signal_strength": "<High/Medium/Low>"}},
                     "market_timing_and_size": {{"score": <1-10>, "rationale": "<4-5 sentences. MUST include exact TAM/SAM metrics and CAGR percentages.>", "signal_strength": "<High/Medium/Low>"}},
@@ -422,7 +519,7 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 "competitive_landscape": [
                     {{
                         "name": "<Competitor Name>", 
-                        "description": "<What they do in 1 sentence. Include scale if known (e.g., '1M+ users', '$50M Series B').>", 
+                        "description": "<What they do in 1 sentence. Include scale if known.>", 
                         "target_segment": "<Who their ideal customer is (e.g., Enterprise, SMB, Solo)>",
                         "pricing_model": "<Exact pricing tiers (e.g., Freemium + $19/mo, 2.9% + 30¢)>",
                         "core_weakness": "<Their biggest flaw or top user complaint based on the data>",
@@ -454,14 +551,10 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 logger.error(f"[_handle_validate_summary] Failed to parse JSON summary. Raw output:\n{final_response}")
                 return await _fail_record(query_id, f"Failed to parse LLM summary JSON: {json_err}")
 
-            # Extract URLs for UI payloads
+            # Extract URLs for UI payloads based on the 15 clean sources used
             extracted_urls = [src.url for src in sources]
             
-            # 7. Persist to ValidateScoreSummary Table (Upsert pattern to prevent UniqueViolationError)
-            # summary_result = await db.execute(select(ValidateScoreSummary).where(ValidateScoreSummary.query_id == query_id))
-            # summary_record = summary_result.scalars().first()
-
-            # Prepare the all_sources list (just title and url, snippet removed)
+            # Prepare the all_sources list
             all_sources_data = [{"title": src.title, "url": src.url} for src in sources]
 
             # 7. Persist to ValidateScoreSummary Table
@@ -473,12 +566,13 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 competitive_landscape=parsed_data.get("competitive_landscape", []),
                 critical_vulnerabilities=parsed_data.get("critical_vulnerabilities", []),
                 actionable_next_steps=parsed_data.get("actionable_next_steps", []),
-                evidentiary_sources=extracted_urls, # Top 5 for main UI reference
-                all_sources=all_sources_data, # all sources for UI display
+                evidentiary_sources=extracted_urls[:5], # Top 5 for main UI reference
+                all_sources=all_sources_data, # All 15 clean sources for UI display
                 meta={
                     "provider": settings.LLM_PROVIDER,
                     "model": settings.LLM_MODEL,
-                    "sources_used": len(sources)
+                    "sources_used": len(sources),
+                    "batches_processed": len(source_batches)
                 }
             )
             db.add(summary_record)

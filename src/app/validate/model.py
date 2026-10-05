@@ -99,14 +99,12 @@ class ValidateQuery(Base):
         self.status         = ValidateQueryStatus.FAILED
         self.failure_reason = reason
 
-
 def _step_name(status: str) -> str:
     return {
         ValidateQueryStatus.VALIDATING: "validate",
         ValidateQueryStatus.SEARCHING:  "search",
         ValidateQueryStatus.SCORING:    "score",
     }.get(status, status.lower())
-
 
 def _set_completion_timestamp(record: "ValidateQuery") -> None:
     now = datetime.now(timezone.utc)
@@ -116,7 +114,6 @@ def _set_completion_timestamp(record: "ValidateQuery") -> None:
         record.searched_at  = now
     elif record.status == ValidateQueryStatus.COMPLETED:
         record.scored_at    = now
-
 
 class ValidateQueryContext(Base):
     __tablename__ = "validate_query_contexts"
@@ -131,7 +128,6 @@ class ValidateQueryContext(Base):
     model           = Column(String(128), nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-
 
 class ValidateMarketSource(Base):
     __tablename__ = "validate_market_sources"
@@ -157,7 +153,30 @@ class ValidateMarketSource(Base):
 
     # user_approved = Column(Boolean, default=False, nullable=True)
     created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    
+class ValidateSummarySource(Base):
+    """
+    Stores the curated, pre-filtered sources that were actually scraped
+    and passed into the LLM Map-Reduce pipeline for score generation.
+    """
+    __tablename__ = "validate_summary_sources"
+    __table_args__ = (
+        UniqueConstraint("query_id", "url", name="uq_validate_summary_source_query_url"),
+    )
 
+    id       = Column(UUID(as_uuid=True), primary_key=True, default=uuid7, index=True)
+    query_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("validate_queries.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    title        = Column(Text, nullable=False)
+    url          = Column(Text, nullable=False, index=True)
+    scrape_order = Column(Integer, nullable=True)  # Priority index within the batch
+
+    created_at   = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 class ValidateScoreSummary(Base):
     __tablename__ = "validate_score_summaries"
