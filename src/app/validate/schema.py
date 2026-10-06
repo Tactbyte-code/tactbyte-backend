@@ -6,7 +6,7 @@ class ValidateQueryInput(BaseModel):
     description: str
     industry: str
     stage: str
-    profile: Optional[Dict[str, Any]] = None
+    location: Optional[Dict[str, Any]] = None
 
 class UpdateValidateStatus(BaseModel):
     status: str

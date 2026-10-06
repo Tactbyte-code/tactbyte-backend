@@ -117,6 +117,10 @@ async def _handle_validate_generate_context(query_id: str) -> dict[str, Any]:
                 base_url=settings.LLM_API_BASE_URL,
                 max_tokens=settings.LLM_MAX_TOKENS,
             )
+            
+            # Extract location safely (with fallback if None)
+            loc_data = (query_record.profile or {}).get("location", {})
+            user_location = loc_data.get("city") or loc_data.get("country") or "Global"
 
             # ==========================================================
             # THE FIX: Enforcing Rigid Market-Hunting Query Archetypes
@@ -127,6 +131,7 @@ async def _handle_validate_generate_context(query_id: str) -> dict[str, Any]:
             Description: {query_record.description}
             Industry: {query_record.industry}
             Stage: {query_record.stage}
+            Target Region / Founder Location: {user_location}
 
             CRITICAL INSTRUCTION: Your 'market_signals' MUST NOT be conversational questions (e.g., do not write "what are the pain points of X"). 
             They must be Google-style advanced search queries designed to find institutional reports, financial data, and pricing.
@@ -475,6 +480,9 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 extracted_market_facts = "No concrete external market data found. Rely on general industry knowledge."
 
             logger.debug(f"[_handle_validate_summary] Consolidated Market Facts Preview:\n{extracted_market_facts[:1000]}...")
+            
+            loc_data = (query_record.profile or {}).get("location", {})
+            user_location = loc_data.get("city") or loc_data.get("country") or "Global"
 
             final_user_prompt = f"""
             Synthesize a comprehensive institutional validation report based on the following venture details and the extracted market facts.
@@ -484,6 +492,7 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
             Description: {query_record.description}
             Industry: {query_record.industry}
             Stage: {query_record.stage}
+            Target Geography: {user_location}
 
             --- EXTRACTED MARKET FACTS ---
             {extracted_market_facts}
@@ -518,12 +527,13 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 }},
                 "competitive_landscape": [
                     {{
-                        "name": "<Competitor Name>", 
-                        "description": "<What they do in 1 sentence. Include scale if known.>", 
-                        "target_segment": "<Who their ideal customer is (e.g., Enterprise, SMB, Solo)>",
-                        "pricing_model": "<Exact pricing tiers (e.g., Freemium + $19/mo, 2.9% + 30¢)>",
-                        "core_weakness": "<Their biggest flaw or top user complaint based on the data>",
-                        "how_to_differentiate": "<1 actionable sentence on how this venture can beat them>",
+                        "name": "<Competitor Name>",
+                        "scope": "<Local / Regional / Global>",
+                        "description": "<What they do in 1 sentence. Include presence in {user_location} if local.>",
+                        "target_segment": "<Enterprise / SMB / Solo>",
+                        "pricing_model": "<Exact pricing tiers>",
+                        "core_weakness": "<Their biggest flaw based on the data>",
+                        "how_to_differentiate": "<Actionable differentiation strategy>",
                         "threat_level": "<High/Medium/Low>"
                     }}
                 ],

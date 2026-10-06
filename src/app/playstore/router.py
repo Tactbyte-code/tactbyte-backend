@@ -12,7 +12,6 @@ from src.app.playstore import services
 
 router = APIRouter(prefix="/playstore", tags=["Playstore"])
 
-
 @router.post("/query", status_code=201)
 async def create_query(
     body: PlaystoreQueryInput,

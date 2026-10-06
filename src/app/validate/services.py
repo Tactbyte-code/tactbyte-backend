@@ -50,14 +50,17 @@ async def raise_validate_query(body: ValidateQueryInput, db: AsyncSession, curre
     )
     onboarding = result.scalar_one_or_none()
     
-    profile = body.profile or {}
+    profile = {}
     if onboarding:
         profile = {
             "occupation": onboarding.occupation,
             "discovery":  onboarding.discovery,
             "usage":      onboarding.usage,
-            **profile,
         }
+    
+    # Add the location data to the profile so it can be used later
+    if body.location:
+        profile["location"] = body.location
 
     record = ValidateQuery(
         user_id=              current_user.id,
