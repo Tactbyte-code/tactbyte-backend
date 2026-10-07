@@ -139,6 +139,7 @@ dependencies = [
     "tomlkit==0.14.0",
     "tqdm==4.67.3",
     "tqdm-loggable==0.4.1",
+    "trafilatura>=2.1.0",
     "typer==0.24.1",
     "typing-extensions==4.15.0",
     "typing-inspection==0.4.2",

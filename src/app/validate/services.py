@@ -2,11 +2,9 @@ import logging
 import math
 from uuid import UUID
 from typing import List, Dict, Any
-
 from fastapi import HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from src.app.validate.model import ValidateQuery, ValidateQueryStatus, ValidateScoreSummary, ValidateMarketSource
 from src.app.onboarding.model import Onboarding
 from src.app.user.model import User

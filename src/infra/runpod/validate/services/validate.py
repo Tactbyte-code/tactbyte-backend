@@ -10,8 +10,8 @@ from bs4 import BeautifulSoup
 from src.core.settings import settings
 from src.core.database import AsyncSessionLocal
 from src.app.validate.model import (
-    ValidateQuery, 
-    ValidateQueryContext, 
+    ValidateQuery,
+    ValidateQueryContext,
     ValidateQueryStatus,
     ValidateMarketSource,
     ValidateScoreSummary,
@@ -453,6 +453,7 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 - Competitor Names & their scale (e.g., funding rounds, user counts)
                 - Exact Pricing Data (e.g., $20/mo, 2.5% transaction fee)
                 - Quantifiable Customer Pain Points (e.g., "takes 4 hours", "loses 15% revenue")
+                - NEW: Look for estimated time to build software, and total number of competitors in the space.
                 
                 Keep it strictly to bullet points. Do not invent data. If no relevant data exists in this batch, output exactly "NO_FACTS".
                 
@@ -518,12 +519,42 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 "executive_verdict": "<8-9 candid sentences summarizing if this is a viable opportunity. Include top-level market size stats.>",
                 "aggregate_score": <MUST be the exact mathematical sum of your 6 dimensional scores divided by 60, then multiplied by 100. (e.g., if dimensions sum to 42, score is 70)>,
                 "dimensional_scores": {{
-                    "pain_point_severity": {{"score": <1-10>, "rationale": "<4-5 sentences. Include exact hours/dollars lost by customers if available.>", "signal_strength": "<High/Medium/Low>"}},
-                    "market_timing_and_size": {{"score": <1-10>, "rationale": "<4-5 sentences. MUST include exact TAM/SAM metrics and CAGR percentages.>", "signal_strength": "<High/Medium/Low>"}},
-                    "competitive_defensibility": {{"score": <1-10>, "rationale": "<4-5 sentences referencing specific incumbent market share or funding.>", "signal_strength": "<High/Medium/Low>"}},
-                    "monetization_viability": {{"score": <1-10>, "rationale": "<4-5 sentences referencing industry standard pricing or willingness-to-pay stats.>", "signal_strength": "<High/Medium/Low>"}},
-                    "landscape_saturation": {{"score": <1-10>, "rationale": "<4-5 sentences quantifying the number of competitors or market fragmentation.>", "signal_strength": "<High/Medium/Low>"}},
-                    "execution_feasibility": {{"score": <1-10>, "rationale": "<4-5 sentences referencing required capital or technical thresholds.>", "signal_strength": "<High/Medium/Low>"}}
+                    "pain_point_severity": {{
+                        "score": <1-10>, 
+                        "rationale": "<4-5 sentences.>", 
+                        "signal_strength": "<High/Medium/Low>",
+                        "key_metric": {{"label": "Est. Revenue/Time Wasted", "value": <float or null>, "unit": "<% or hrs>"}}
+                    }},
+                    "market_timing_and_size": {{
+                        "score": <1-10>, 
+                        "rationale": "<4-5 sentences.>", 
+                        "signal_strength": "<High/Medium/Low>",
+                        "key_metric": {{"label": "Total Addressable Market", "value": <float or null>, "unit": "<$B>"}}
+                    }},
+                    "competitive_defensibility": {{
+                        "score": <1-10>, 
+                        "rationale": "<4-5 sentences.>", 
+                        "signal_strength": "<High/Medium/Low>",
+                        "key_metric": {{"label": "Top Incumbent Funding/Share", "value": <float or null>, "unit": "<$M or %>"}}
+                    }},
+                    "monetization_viability": {{
+                        "score": <1-10>, 
+                        "rationale": "<4-5 sentences.>", 
+                        "signal_strength": "<High/Medium/Low>",
+                        "key_metric": {{"label": "Avg Industry ARPU", "value": <float or null>, "unit": "<$>"}}
+                    }},
+                    "landscape_saturation": {{
+                        "score": <1-10>, 
+                        "rationale": "<4-5 sentences.>", 
+                        "signal_strength": "<High/Medium/Low>",
+                        "key_metric": {{"label": "Established Competitors", "value": <integer or null>, "unit": "<count>"}}
+                    }},
+                    "execution_feasibility": {{
+                        "score": <1-10>, 
+                        "rationale": "<4-5 sentences.>", 
+                        "signal_strength": "<High/Medium/Low>",
+                        "key_metric": {{"label": "Est. Time to MVP", "value": <float or null>, "unit": "<months>"}}
+                    }}
                 }},
                 "competitive_landscape": [
                     {{
@@ -539,12 +570,18 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 ],
                 "critical_vulnerabilities": [
                     "<String detailing top risk 1>",
-                    "<String detailing top risk 2>"
+                    "<String detailing top risk 2>",
+                    "<String detailing top risk 3>",
+                    "<String detailing top risk 4>",
+                    "<String detailing top risk 5>",
                 ],
                 "actionable_next_steps": [
                     "<Stage-appropriate milestone 1>",
-                    "<Stage-appropriate milestone 2>"
-                ]
+                    "<Stage-appropriate milestone 2>",
+                    "<Stage-appropriate milestone 3>",
+                    "<Stage-appropriate milestone 4>",
+                    "<Stage-appropriate milestone 5>",
+                ],
             }}
             """
 
