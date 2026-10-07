@@ -523,37 +523,91 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                         "score": <1-10>, 
                         "rationale": "<4-5 sentences.>", 
                         "signal_strength": "<High/Medium/Low>",
-                        "key_metric": {{"label": "Est. Revenue/Time Wasted", "value": <float or null>, "unit": "<% or hrs>"}}
+                        "key_metric": {{
+                            "label": "Est. Revenue/Time Wasted", 
+                            "value": <float or null>, 
+                            "unit": "<% or hrs>",
+                            "chart_data": [
+                                {{"name": "This Venture", "value": <float or null>}},
+                                {{"name": "Industry Avg", "value": <float or null>}},
+                                {{"name": "Legacy Tool", "value": <float or null>}}
+                            ]
+                        }}
                     }},
                     "market_timing_and_size": {{
                         "score": <1-10>, 
                         "rationale": "<4-5 sentences.>", 
                         "signal_strength": "<High/Medium/Low>",
-                        "key_metric": {{"label": "Total Addressable Market", "value": <float or null>, "unit": "<$B>"}}
+                        "key_metric": {{
+                            "label": "Total Addressable Market", 
+                            "value": <float or null>, 
+                            "unit": "<$B>",
+                            "chart_data": [
+                                {{"name": "This Venture", "value": <float or null>}},
+                                {{"name": "Industry Target", "value": <float or null>}},
+                                {{"name": "Top Incumbent", "value": <float or null>}}
+                            ]
+                        }}
                     }},
                     "competitive_defensibility": {{
                         "score": <1-10>, 
                         "rationale": "<4-5 sentences.>", 
                         "signal_strength": "<High/Medium/Low>",
-                        "key_metric": {{"label": "Top Incumbent Funding/Share", "value": <float or null>, "unit": "<$M or %>"}}
+                        "key_metric": {{
+                            "label": "Top Incumbent Funding/Share", 
+                            "value": <float or null>, 
+                            "unit": "<$M or %>",
+                            "chart_data": [
+                                {{"name": "This Venture", "value": <float or null>}},
+                                {{"name": "Average Startup", "value": <float or null>}},
+                                {{"name": "Top Incumbent", "value": <float or null>}}
+                            ]
+                        }}
                     }},
                     "monetization_viability": {{
                         "score": <1-10>, 
                         "rationale": "<4-5 sentences.>", 
                         "signal_strength": "<High/Medium/Low>",
-                        "key_metric": {{"label": "Avg Industry ARPU", "value": <float or null>, "unit": "<$>"}}
+                        "key_metric": {{
+                            "label": "Avg Industry ARPU", 
+                            "value": <float or null>, 
+                            "unit": "<$>",
+                            "chart_data": [
+                                {{"name": "This Venture", "value": <float or null>}},
+                                {{"name": "Industry Avg", "value": <float or null>}},
+                                {{"name": "Top Incumbent", "value": <float or null>}}
+                            ]
+                        }}
                     }},
                     "landscape_saturation": {{
                         "score": <1-10>, 
                         "rationale": "<4-5 sentences.>", 
                         "signal_strength": "<High/Medium/Low>",
-                        "key_metric": {{"label": "Established Competitors", "value": <integer or null>, "unit": "<count>"}}
+                        "key_metric": {{
+                            "label": "Established Competitors", 
+                            "value": <integer or null>, 
+                            "unit": "<count>",
+                            "chart_data": [
+                                {{"name": "This Venture", "value": <integer or null>}},
+                                {{"name": "Direct Peers", "value": <integer or null>}},
+                                {{"name": "Total Category", "value": <integer or null>}}
+                            ]
+                        }}
                     }},
                     "execution_feasibility": {{
                         "score": <1-10>, 
                         "rationale": "<4-5 sentences.>", 
                         "signal_strength": "<High/Medium/Low>",
-                        "key_metric": {{"label": "Est. Time to MVP", "value": <float or null>, "unit": "<months>"}}
+                        "key_metric": {{
+                            "label": "Est. Time to MVP", 
+                            "value": <float or null>, 
+                            "unit": "<months>",
+                            "chart_data": [
+                                {{"name": "This Venture", "value": <float or null>}},
+                                {{"name": "Industry Avg", "value": <float or null>}},
+                                {{"name": "Enterprise Build", "value": <float or null>}}
+                            ]
+                        }}
                     }}
                 }},
                 "competitive_landscape": [
