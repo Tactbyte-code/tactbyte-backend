@@ -450,10 +450,10 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                 
                 Identify:
                 - Exact Market Size & Growth metrics (e.g., $X Billion, Y% CAGR)
-                - Competitor Names & their scale (e.g., funding rounds, user counts)
+                - Competitor Names, their scale, AND their official website URLs if mentioned.
                 - Exact Pricing Data (e.g., $20/mo, 2.5% transaction fee)
                 - Quantifiable Customer Pain Points (e.g., "takes 4 hours", "loses 15% revenue")
-                - NEW: Look for estimated time to build software, and total number of competitors in the space.
+                - Look for estimated time to build software, and total number of competitors in the space.
                 
                 Keep it strictly to bullet points. Do not invent data. If no relevant data exists in this batch, output exactly "NO_FACTS".
                 
@@ -611,14 +611,17 @@ async def _handle_validate_summary(query_id: str) -> dict[str, Any]:
                     }}
                 }},
                 "competitive_landscape": [
+                    # ---> ADD THIS STRICT LIMIT INSTRUCTION <---
+                    # "LIMIT: Extract a maximum of 5 to 8 of the most prominent competitors explicitly named in the market facts. Do not list more than 8."
                     {{
-                        "name": "<Competitor Name>",
+                        "name": "<Competitor Name>", 
+                        "website_url": "<Official URL (e.g., https://www.competitor.com). Infer standard .com if not explicitly in text.>",
                         "scope": "<Local / Regional / Global>",
-                        "description": "<What they do in 1 sentence. Include presence in {user_location} if local.>",
-                        "target_segment": "<Enterprise / SMB / Solo>",
-                        "pricing_model": "<Exact pricing tiers>",
-                        "core_weakness": "<Their biggest flaw based on the data>",
-                        "how_to_differentiate": "<Actionable differentiation strategy>",
+                        "description": "<What they do in 1 sentence. Include presence in {user_location} if local.>", 
+                        "target_segment": "<Who their ideal customer is (e.g., Enterprise, SMB, Solo)>",
+                        "pricing_model": "<Exact pricing tiers (e.g., Freemium + $19/mo, 2.9% + 30¢)>",
+                        "core_weakness": "<Their biggest flaw or top user complaint based on the data>",
+                        "how_to_differentiate": "<1 actionable sentence on how this venture can beat them>",
                         "threat_level": "<High/Medium/Low>"
                     }}
                 ],
