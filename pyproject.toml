@@ -104,6 +104,7 @@ dependencies = [
     "pyasn1==0.6.3",
     "pyasn1-modules==0.4.2",
     "pycares==5.0.1",
+    "pycountry>=26.2.16",
     "pycparser==3.0",
     "pydantic==2.12.5",
     "pydantic-core==2.41.5",
