@@ -1,8 +1,8 @@
 import uuid
+import re
 from datetime import datetime, timezone
-
+import logging
 from sqlalchemy import (
-    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -10,10 +10,15 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Index
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from src.core.database import Base
 from src.app.utils.uuid7 import uuid7
+from typing import Any, Literal
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
 
 class ValidateQueryStatus:
     INITIALIZED      = "INITIALIZED"
@@ -39,6 +44,99 @@ RECOVERABLE_STEPS = {
     ValidateQueryStatus.SCORING:    ValidateQueryStatus.SEARCHING,
     ValidateQueryStatus.SEARCH_COMPLETED: ValidateQueryStatus.SEARCHING,
 }
+
+# --------------------------------------------------------------------------- #
+# Research plan models
+# --------------------------------------------------------------------------- #
+
+class _Clipped(BaseModel):
+    """Truncate over-long lists to their declared max_length instead of failing
+    validation, so one extra item from the LLM never costs a whole retry."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _clip(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for name, field in cls.model_fields.items():
+            if isinstance(data.get(name), list):
+                for meta in field.metadata:
+                    limit = getattr(meta, "max_length", None)
+                    if limit is not None:
+                        data[name] = data[name][:limit]
+        return data
+
+
+class PainPlan(_Clipped):
+    problem_statement: str
+    target_segment: str
+    complaint_queries: list[str] = Field(min_length=3, max_length=8)
+    alternative_queries: list[str] = Field(default_factory=list, max_length=6)
+    competitor_app_terms: list[str] = Field(default_factory=list, max_length=4)
+    stackexchange_sites: list[str] = Field(default_factory=list, max_length=2)
+
+
+class MarketPlan(_Clipped):
+    industry_keywords: list[str] = Field(min_length=1, max_length=8)
+    indicator_search_terms: list[str] = Field(min_length=1, max_length=8)
+    institutional_queries: list[str] = Field(min_length=1, max_length=6)
+    bottom_up_variables: list[str] = Field(default_factory=list, max_length=8)
+
+
+class CompetitionPlan(_Clipped):
+    seed_competitors: list[str] = Field(default_factory=list, max_length=8)
+    discovery_queries: list[str] = Field(min_length=1, max_length=6)
+    pricing_queries: list[str] = Field(default_factory=list, max_length=6)
+    osm_tags: list[str] = Field(default_factory=list, max_length=4)
+
+
+class CostPlan(_Clipped):
+    cost_items: list[str] = Field(min_length=1, max_length=10)
+    wage_roles: list[str] = Field(default_factory=list, max_length=6)
+    licence_queries: list[str] = Field(default_factory=list, max_length=6)
+
+
+class RiskPlan(_Clipped):
+    regulatory_queries: list[str] = Field(default_factory=list, max_length=6)
+    funding_queries: list[str] = Field(default_factory=list, max_length=6)
+    survival_sector_terms: list[str] = Field(default_factory=list, max_length=6)
+
+
+class TopicBoundary(_Clipped):
+    in_scope: list[str] = Field(default_factory=list, max_length=8)
+    adjacent: list[str] = Field(default_factory=list, max_length=8)
+    out_of_scope: list[str] = Field(default_factory=list, max_length=8)
+
+
+class SchemaHints(_Clipped):
+    pricing_models: list[str] = Field(default_factory=list, max_length=8)
+    competitor_names: list[str] = Field(default_factory=list, max_length=8)
+    key_metrics: list[str] = Field(default_factory=list, max_length=8)
+
+
+class ResearchPlan(_Clipped):
+    business_type: Literal["digital", "physical", "service", "hybrid"]
+    country_iso2: str
+    pain: PainPlan
+    market: MarketPlan
+    competition: CompetitionPlan
+    cost: CostPlan
+    risk: RiskPlan
+    nlp_anchors: list[str] = Field(default_factory=list, max_length=15)
+    topic_boundary: TopicBoundary = Field(default_factory=TopicBoundary)
+    schema_hints: SchemaHints = Field(default_factory=SchemaHints)
+
+    @field_validator("country_iso2")
+    @classmethod
+    def _iso(cls, v: str) -> str:
+        v = (v or "").strip().upper()
+        if re.fullmatch(r"[A-Z]{2}|WW", v):
+            return v
+        # Do not fail the whole plan for a bad code; it is re-resolved from the
+        # user's profile later, and "WW" (worldwide) is a safe fallback.
+        logger.warning("[generate_context] invalid country_iso2 %r -> 'WW'", v)
+        return "WW"
 
 class ValidateQuery(Base):
     __tablename__ = "validate_queries"
@@ -124,10 +222,27 @@ class ValidateQueryContext(Base):
     nlp_anchors     = Column(JSONB,       nullable=True)
     topic_boundary  = Column(JSONB,       nullable=True)
     schema_hints    = Column(JSONB,       nullable=True)
+    research_plan   = Column(JSONB,       nullable=True) #new fro context generation
     provider        = Column(String(32),  nullable=True)
     model           = Column(String(128), nullable=True)
-
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+class ValidateQueryEvidence(Base):
+    __tablename__ = "validate_query_evidence"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    query_id = Column(UUID(as_uuid=True), ForeignKey("validate_queries.id", ondelete="CASCADE"), nullable=False)
+    parameter = Column(String(64), nullable=False)  # 1 of the 9 target parameters
+    source_type = Column(String(32), nullable=False) # "vertex_search", "world_bank", "hn_algolia"
+    source_url = Column(Text, nullable=False)
+    title = Column(Text, nullable=True)
+    raw_content = Column(Text, nullable=False)
+    metadata_ = Column("metadata", JSONB, default=dict)
+    retrieved_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_evidence_query_param", "query_id", "parameter"),
+    )
 
 class ValidateMarketSource(Base):
     __tablename__ = "validate_market_sources"
