@@ -216,15 +216,16 @@ def _set_completion_timestamp(record: "ValidateQuery") -> None:
 class ValidateQueryContext(Base):
     __tablename__ = "validate_query_contexts"
 
-    id              = Column(UUID(as_uuid=True), primary_key=True, default=uuid7, index=True)
-    query_id        = Column(UUID(as_uuid=True), ForeignKey("validate_queries.id"), nullable=False, index=True)
-    market_signals  = Column(JSONB,       nullable=True)
-    nlp_anchors     = Column(JSONB,       nullable=True)
-    topic_boundary  = Column(JSONB,       nullable=True)
-    schema_hints    = Column(JSONB,       nullable=True)
-    research_plan   = Column(JSONB,       nullable=True) #new fro context generation
-    provider        = Column(String(32),  nullable=True)
-    model           = Column(String(128), nullable=True)
+    id                = Column(UUID(as_uuid=True), primary_key=True, default=uuid7, index=True)
+    query_id          = Column(UUID(as_uuid=True), ForeignKey("validate_queries.id"), nullable=False, index=True)
+    market_signals    = Column(JSONB,       nullable=True)
+    nlp_anchors       = Column(JSONB,       nullable=True)
+    topic_boundary    = Column(JSONB,       nullable=True)
+    schema_hints      = Column(JSONB,       nullable=True)
+    research_plan     = Column(JSONB,       nullable=True) #new fro context generation
+    collection_report = Column(JSONB, nullable=True)
+    provider          = Column(String(32),  nullable=True)
+    model             = Column(String(128), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 class ValidateQueryEvidence(Base):
