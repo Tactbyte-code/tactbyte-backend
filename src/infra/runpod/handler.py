@@ -3,6 +3,14 @@ import os
 import base64
 import tempfile
 import runpod
+
+# Decode the GCP key and set the credential path for the container
+if "GCP_KEY_B64" in os.environ and "GOOGLE_APPLICATION_CREDENTIALS" not in os.environ:
+    fd, path = tempfile.mkstemp(suffix=".json")
+    with os.fdopen(fd, "wb") as f:
+        f.write(base64.b64decode(os.environ["GCP_KEY_B64"]))
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
+    
 from src.core.settings import settings
 from src.infra.runpod.reddit.services import reddit
 from src.infra.runpod.playstore.services import playstore
@@ -16,15 +24,7 @@ from src.infra.runpod.validate.services import validate_summary
 # import src.app.registry 
 # from src.infra.runpod.ai_lead_engine.services import ai_lead_engine
 
-# Decode the GCP key and set the credential path for the container
-if "GCP_KEY_B64" in os.environ and "GOOGLE_APPLICATION_CREDENTIALS" not in os.environ:
-    fd, path = tempfile.mkstemp(suffix=".json")
-    with os.fdopen(fd, "wb") as f:
-        f.write(base64.b64decode(os.environ["GCP_KEY_B64"]))
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
-
 # ─── Router ───────────────────────────────────────────────────────────────────
-
 async def handler(job: dict):
     """
     RunPod serverless handler.
