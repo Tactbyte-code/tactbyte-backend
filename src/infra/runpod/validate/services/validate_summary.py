@@ -726,7 +726,7 @@ def fallback_narrative(sk: dict, facts: dict) -> NarrativeOut:
     if score:
         verdict = f"Overall viability is {ov['band'].lower()} ({score}, {ov['confidence']} confidence)."
         if strength and risk:
-            verdict += f" Main strength: {strength.rstrip('.')}. Main risk: {risk.rstrip('.')}."
+            verdict += f" Main strength: {strength.get('text', '').rstrip('.')}. Main risk: {risk.get('text', '').rstrip('.')}."
     else:
         verdict = "There is too little usable data to give an overall viability score."
     summary = [verdict]
