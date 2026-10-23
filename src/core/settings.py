@@ -53,7 +53,13 @@ class Settings(BaseSettings):
     LEAD_SYNC_INTERVAL_HOURS: int = 12
 
     # CORS
-    ALLOWED_ORIGINS: str = ""
+    ALLOWED_ORIGINS: str
+    
+    #vertex embedding
+    GOOGLE_CLOUD_PROJECT: str
+    GOOGLE_CLOUD_LOCATION: str
+    GOOGLE_APPLICATION_CREDENTIALS: str
+    EMBEDDING_PROVIDER: str
 
     @computed_field
     @property

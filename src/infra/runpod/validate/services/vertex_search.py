@@ -3,7 +3,6 @@ import hashlib
 import json
 import logging
 from typing import Any
-
 from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import discoveryengine_v1 as discoveryengine
 from google.oauth2 import service_account

@@ -6,6 +6,8 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Boolean,
+    Float,
     Integer,
     String,
     Text,
@@ -25,6 +27,9 @@ class ValidateQueryStatus:
     CREATED          = "CREATED"
     VALIDATING       = "VALIDATING"
     VALIDATED        = "VALIDATED"
+    FILTERED         = "FILTERED"
+    EXTRACTED        = "EXTRACTED"
+    SCORED           = "SCORED"
     SEARCHING        = "SEARCHING"
     SEARCH_COMPLETED = "SEARCH_COMPLETED"
     SCORING          = "SCORING"
@@ -67,7 +72,6 @@ class _Clipped(BaseModel):
                         data[name] = data[name][:limit]
         return data
 
-
 class PainPlan(_Clipped):
     problem_statement: str
     target_segment: str
@@ -76,13 +80,11 @@ class PainPlan(_Clipped):
     competitor_app_terms: list[str] = Field(default_factory=list, max_length=4)
     stackexchange_sites: list[str] = Field(default_factory=list, max_length=2)
 
-
 class MarketPlan(_Clipped):
     industry_keywords: list[str] = Field(min_length=1, max_length=8)
     indicator_search_terms: list[str] = Field(min_length=1, max_length=8)
     institutional_queries: list[str] = Field(min_length=1, max_length=6)
     bottom_up_variables: list[str] = Field(default_factory=list, max_length=8)
-
 
 class CompetitionPlan(_Clipped):
     seed_competitors: list[str] = Field(default_factory=list, max_length=8)
@@ -90,30 +92,25 @@ class CompetitionPlan(_Clipped):
     pricing_queries: list[str] = Field(default_factory=list, max_length=6)
     osm_tags: list[str] = Field(default_factory=list, max_length=4)
 
-
 class CostPlan(_Clipped):
     cost_items: list[str] = Field(min_length=1, max_length=10)
     wage_roles: list[str] = Field(default_factory=list, max_length=6)
     licence_queries: list[str] = Field(default_factory=list, max_length=6)
-
 
 class RiskPlan(_Clipped):
     regulatory_queries: list[str] = Field(default_factory=list, max_length=6)
     funding_queries: list[str] = Field(default_factory=list, max_length=6)
     survival_sector_terms: list[str] = Field(default_factory=list, max_length=6)
 
-
 class TopicBoundary(_Clipped):
     in_scope: list[str] = Field(default_factory=list, max_length=8)
     adjacent: list[str] = Field(default_factory=list, max_length=8)
     out_of_scope: list[str] = Field(default_factory=list, max_length=8)
 
-
 class SchemaHints(_Clipped):
     pricing_models: list[str] = Field(default_factory=list, max_length=8)
     competitor_names: list[str] = Field(default_factory=list, max_length=8)
     key_metrics: list[str] = Field(default_factory=list, max_length=8)
-
 
 class ResearchPlan(_Clipped):
     business_type: Literal["digital", "physical", "service", "hybrid"]
@@ -222,10 +219,12 @@ class ValidateQueryContext(Base):
     nlp_anchors       = Column(JSONB,       nullable=True)
     topic_boundary    = Column(JSONB,       nullable=True)
     schema_hints      = Column(JSONB,       nullable=True)
-    research_plan     = Column(JSONB,       nullable=True) #new fro context generation
+    research_plan     = Column(JSONB,       nullable=True) #new for context generation
     collection_report = Column(JSONB, nullable=True)
     provider          = Column(String(32),  nullable=True)
     model             = Column(String(128), nullable=True)
+    filter_report     = Column(JSONB, nullable=True)
+    extract_report    = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 class ValidateQueryEvidence(Base):
@@ -239,10 +238,84 @@ class ValidateQueryEvidence(Base):
     title = Column(Text, nullable=True)
     raw_content = Column(Text, nullable=False)
     metadata_ = Column("metadata", JSONB, default=dict)
+    is_selected = Column(Boolean, nullable=True)
+    relevance_score = Column(Float, nullable=True)
+    filter_meta = Column(JSONB, nullable=True)
+    extracted_data = Column(JSONB, nullable=True)
     retrieved_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (
         Index("ix_evidence_query_param", "query_id", "parameter"),
+    )
+
+class ValidateParameterResult(Base):
+    """Stage 6: one row per parameter per query."""
+    __tablename__ = "validate_parameter_result"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    query_id = Column(UUID(as_uuid=True), ForeignKey("validate_queries.id", ondelete="CASCADE"), nullable=False)
+    parameter = Column(String(64), nullable=False)   # pain, demand, market, competition, ...
+    status = Column(String(32), nullable=False)      # "scored" | "insufficient_data"
+    score = Column(Float, nullable=True)             # 0-100, None when insufficient_data
+    rating = Column(String(16), nullable=True)       # strong | moderate | weak
+    confidence = Column(String(16), nullable=True)   # high | medium | low
+    components = Column(JSONB, nullable=False, default=dict)
+    details = Column(JSONB, nullable=False, default=dict)
+    caveats = Column(JSONB, nullable=False, default=list)
+    evidence_ids = Column(JSONB, nullable=False, default=list)
+    scoring_version = Column(Integer, nullable=False, default=1)
+    computed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("query_id", "parameter", name="uq_param_result_query_param"),
+        Index("ix_param_result_query", "query_id"),
+    )
+
+class ValidateQueryResult(Base):
+    """Stage 7: one row per query (overall score and breakdown)."""
+    __tablename__ = "validate_query_result"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    query_id = Column(UUID(as_uuid=True), ForeignKey("validate_queries.id", ondelete="CASCADE"), nullable=False)
+    viability_score = Column(Float, nullable=True)   # None when < 60% of weight is covered
+    band = Column(String(32), nullable=False)        # Strong | Promising | Mixed | Weak | Insufficient evidence
+    confidence = Column(String(16), nullable=False)  # high | medium | low
+    breakdown = Column(JSONB, nullable=False, default=list)
+    strengths = Column(JSONB, nullable=False, default=list)
+    risks = Column(JSONB, nullable=False, default=list)
+    data_quality = Column(JSONB, nullable=False, default=dict)
+    assumptions = Column(JSONB, nullable=False, default=list)   # snapshot of assumptions used in this run
+    scoring_version = Column(Integer, nullable=False, default=1)
+    computed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    report = Column(JSONB, nullable=True)
+    report_id = Column(String(16), unique=True, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("query_id", name="uq_query_result_query"),
+    )
+
+class ValidateQueryAssumption(Base):
+    """Editable scoring inputs. Defaults are inserted on the first run; user edits are never overwritten."""
+    __tablename__ = "validate_query_assumption"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    query_id = Column(UUID(as_uuid=True), ForeignKey("validate_queries.id", ondelete="CASCADE"), nullable=False)
+    key = Column(String(64), nullable=False)         # e.g. "gross_margin", "monthly_churn"
+    name = Column(Text, nullable=False)              # human-readable description
+    value = Column(Float, nullable=True)             # None = unset (arpu_monthly, starting_budget)
+    low = Column(Float, nullable=True)
+    high = Column(Float, nullable=True)
+    unit = Column(String(32), nullable=False)        # ratio | currency | months | count | people
+    label = Column(String(32), nullable=False, default="assumed")   # assumed | sourced | estimated
+    source = Column(String(16), nullable=False, default="default")  # "default" | "user"
+    affects = Column(JSONB, nullable=False, default=list)           # parameters this input influences
+    editable = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("query_id", "key", name="uq_assumption_query_key"),
+        Index("ix_assumption_query", "query_id"),
     )
 
 class ValidateMarketSource(Base):
