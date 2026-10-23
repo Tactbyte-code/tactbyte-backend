@@ -45,6 +45,33 @@ async def trigger_search(
 ):
     return await services.trigger_search(query_id, db, current_user)
 
+# ------- filter data -------
+@router.post("/query/{query_id}/filter")
+async def trigger_filter(
+    query_id: UUID,
+    db: AsyncSession = Depends(session),
+    current_user: User = Depends(require_user),
+):
+    return await services.trigger_filter(query_id, db, current_user)
+
+# ------- extract data -------
+@router.post("/query/{query_id}/extract")
+async def trigger_extract(
+    query_id: UUID,
+    db: AsyncSession = Depends(session),
+    current_user: User = Depends(require_user),
+):
+    return await services.trigger_extract(query_id, db, current_user)
+
+# ------- score data -------
+@router.post("/query/{query_id}/score")
+async def trigger_score(
+    query_id: UUID,
+    db: AsyncSession = Depends(session),
+    current_user: User = Depends(require_user),
+):
+    return await services.trigger_score(query_id, db, current_user)
+
 # ------- generate summary -------
 @router.post("/query/{query_id}/generate-summary")
 async def generate_summary(

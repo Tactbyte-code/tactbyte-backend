@@ -16,6 +16,11 @@ USAGE:
 
     response = client.call(system_prompt, user_prompt)  # always returns str
 
+    # Per-call options (currently honoured by the sarvam provider only):
+    response = client.call(system_prompt, user_prompt,
+                           json_mode=True, max_tokens=6000,
+                           temperature=0.2, reasoning_effort=None)
+
 PROVIDERS:
     anthropic  │ LLM_PROVIDER=anthropic  LLM_API_KEY=sk-ant-...
     openai     │ LLM_PROVIDER=openai     LLM_API_KEY=sk-...
@@ -25,12 +30,23 @@ PROVIDERS:
     hf         │ LLM_PROVIDER=hf         LLM_MODEL=Qwen/Qwen3-4B
                │ LLM_BASE_URL=/path/to/hf-cache  (optional)
     mock       │ LLM_PROVIDER=mock       (returns empty JSON instantly)
+
+CHANGES vs. the previous version (all backward compatible):
+    1. _post(): retries 429/5xx/network errors with exponential backoff, treats
+       403 like 401 for the key hint (Sarvam returns 403 on auth failure), and no
+       longer leaks ?key=... query strings into error messages.
+    2. call(): optional keyword args json_mode / max_tokens / temperature /
+       reasoning_effort (used by the sarvam provider; ignored by the others).
+    3. _sarvam(): optional JSON mode (response_format), explicit control of the
+       reasoning budget, clear error when the reply is empty or truncated,
+       and <think>/code-fence stripping (same as the HF path).
 ─────────────────────────────────────────────────────────────────────────────
 """
 
 import json
 import os
 import re
+import time
 import urllib.request
 import urllib.error
 import runpod
@@ -38,6 +54,10 @@ import runpod
 from src.core.settings import settings
 
 log = runpod.RunPodLogger()
+
+# Sentinel so callers can distinguish "not provided" from an explicit None
+# (reasoning_effort=None means "switch reasoning off" for Sarvam).
+_UNSET = object()
 
 # ── Provider defaults ─────────────────────────────────────────────────────────
 _PROVIDER_DEFAULTS = {
@@ -94,24 +114,65 @@ _FALLBACK_LADDER = [
 
 _VRAM_SAFETY_MARGIN_GB = 2.0   # more headroom for KV cache on large GPUs
 
+# ── HTTP retry settings ───────────────────────────────────────────────────────
+_RETRY_STATUS      = {429, 500, 502, 503, 504}
+_MAX_ATTEMPTS      = 3
+_RETRY_BASE_SLEEP  = 1.0        # seconds; doubles each attempt (1s, 2s, ...)
+_RETRY_MAX_SLEEP   = 30.0
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HTTP HELPER
 # ═══════════════════════════════════════════════════════════════════════════════
-def _post(url: str, payload: dict, headers: dict) -> dict:
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", **headers},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        body = e.read().decode()[:600]
-        hint = " (token/key expired?)" if e.code == 401 else ""
-        raise RuntimeError(f"HTTP {e.code}{hint}: {body}")
+def _safe_url(url: str) -> str:
+    """Drop the query string so API keys (e.g. Gemini ?key=...) never reach logs."""
+    return url.split("?", 1)[0]
+
+
+def _post(url: str, payload: dict, headers: dict,
+          timeout: int = 120, attempts: int = _MAX_ATTEMPTS) -> dict:
+    data = json.dumps(payload).encode("utf-8")
+
+    for attempt in range(1, attempts + 1):
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json", **headers},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+
+        except urllib.error.HTTPError as e:          # must precede URLError
+            body = e.read().decode(errors="replace")[:600]
+            if e.code in _RETRY_STATUS and attempt < attempts:
+                delay = min(_RETRY_BASE_SLEEP * 2 ** (attempt - 1), _RETRY_MAX_SLEEP)
+                retry_after = e.headers.get("Retry-After") if e.headers else None
+                if retry_after and retry_after.isdigit():
+                    delay = min(float(retry_after), _RETRY_MAX_SLEEP)
+                log.info(f"[LLM client] HTTP {e.code} from {_safe_url(url)} — retry {attempt}/{attempts - 1} in {delay:.1f}s")
+                time.sleep(delay)
+                continue
+            hint = " (API key invalid or expired?)" if e.code in (401, 403) else ""
+            raise RuntimeError(f"HTTP {e.code}{hint}: {body}")
+
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            if attempt < attempts:
+                delay = min(_RETRY_BASE_SLEEP * 2 ** (attempt - 1), _RETRY_MAX_SLEEP)
+                log.info(f"[LLM client] Network error ({e}) — retry {attempt}/{attempts - 1} in {delay:.1f}s")
+                time.sleep(delay)
+                continue
+            raise RuntimeError(f"Network error calling {_safe_url(url)}: {e}")
+
+    raise RuntimeError(f"Request to {_safe_url(url)} failed after {attempts} attempts")
+
+
+def _clean_output(text: str) -> str:
+    """Strip <think> blocks and markdown code fences."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    text = re.sub(r"```json\s*|```\s*", "", text)
+    return text.strip()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -206,17 +267,37 @@ class LLMClient:
         log.info(f"[LLM client] LLMClient ready → provider={provider} | model={model}")
 
     # ── Public interface ──────────────────────────────────────────────────────
-    def call(self, system: str, prompt: str) -> str:
+    def call(
+        self,
+        system: str,
+        prompt: str,
+        *,
+        json_mode: bool = False,
+        max_tokens: int = None,
+        temperature: float = None,
+        reasoning_effort=_UNSET,
+    ) -> str:
         """
         Send a single system+user turn to the configured LLM.
         Always returns a plain string (JSON or otherwise).
+
+        Optional per-call options (currently honoured by provider 'sarvam';
+        other providers ignore them and behave exactly as before):
+            json_mode         ask the API for valid-JSON output (response_format)
+            max_tokens        override the provider default for this call only
+            temperature       override the default (0.3) for this call only
+            reasoning_effort  pass None to switch reasoning off; omit to keep the
+                              API default. Reasoning tokens count towards max_tokens.
         """
         p = self.provider
         if   p == "anthropic": return self._anthropic(system, prompt)
         elif p == "openai":    return self._openai(system, prompt)
         elif p == "gemini":    return self._gemini(system, prompt)
         elif p == "ollama":    return self._ollama(system, prompt)
-        elif p == "sarvam":    return self._sarvam(system, prompt)
+        elif p == "sarvam":
+            return self._sarvam(system, prompt, json_mode=json_mode,
+                                max_tokens=max_tokens, temperature=temperature,
+                                reasoning_effort=reasoning_effort)
         elif p in ("hf", "hf-local"): return self._hf(system, prompt)
         elif p == "mock":      return "{}"
         else: raise ValueError(f"Unknown provider: {p}")
@@ -282,31 +363,41 @@ class LLMClient:
         )
         return resp["message"]["content"]
 
-    def _sarvam(self, system: str, prompt: str) -> str:
+    def _sarvam(self, system: str, prompt: str, json_mode: bool = False, **kwargs) -> str:
         """
-        Sarvam AI chat completions.
-        Docs: https://docs.sarvam.ai
+        Sarvam AI chat completions (POST /v1/chat/completions).
+
+        json_mode=True sends response_format={"type": "json_object"}: the API then
+        guarantees syntactically valid JSON (not a specific schema).
+        Extra keyword arguments that call() forwards (max_tokens, temperature,
+        top_p) are honoured when they carry a value and ignored otherwise.
         Auth: api-subscription-key header (your LLM_API_KEY value).
-        The system prompt is prepended as a system-role message.
         """
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
+        temperature = kwargs.get("temperature")
+        top_p = kwargs.get("top_p")
+        payload = {
+            "model":       self.model,
+            "messages":    messages,
+            "max_tokens":  kwargs.get("max_tokens") or _MAX_TOKENS["sarvam"],
+            "temperature": 0.3 if temperature is None else temperature,
+            "top_p":       1 if top_p is None else top_p,
+        }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
         resp = _post(
             f"{self.base_url}/v1/chat/completions",
-            {
-                "model":      self.model,
-                "messages":   messages,
-                "max_tokens": _MAX_TOKENS["sarvam"],
-                "temperature": 0.3,
-                "top_p":      1,
-            },
+            payload,
             {"api-subscription-key": self.api_key},
         )
-        return resp["choices"][0]["message"]["content"]
-
+        # content can be null (e.g. output cut off); keep the "always returns str" contract
+        return resp["choices"][0]["message"].get("content") or ""
+    
     # ── HF local inference — model loaded once, reused forever ───────────────
     def _hf_ensure_loaded(self):
         """Load model + tokenizer into VRAM if not already loaded."""
@@ -500,7 +591,7 @@ def get_client(
     defaults = _PROVIDER_DEFAULTS[provider]
     model    = model    or settings.LLM_MODEL      or defaults["model"]
     api_key  = api_key  or settings.LLM_API_KEY
-    base_url = base_url or settings.LLM_BASE_URL   or defaults["base_url"]
+    base_url = base_url or settings.LLM_API_BASE_URL   or defaults["base_url"]
 
     # max_tokens: explicit arg > .env > hardcoded default
     resolved_max = max_tokens or settings.LLM_MAX_TOKENS

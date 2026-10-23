@@ -15,19 +15,18 @@ from src.app.validate.model import (
     ValidateQueryStatus,
     ValidateMarketSource,
     ValidateScoreSummary,
-    ValidateSummarySource
+    ValidateSummarySource,
+    ValidateQueryEvidence
 )
 from src.infra.runpod.llm import get_client
 from src.infra.runpod.validate.services.vertex_search import run_vertex_search
+from src.infra.runpod.validate.services.search_collectors import (
+    fetch_macro_indicators,
+    fetch_community_discussions,
+    # fetch_vertex_search,
+)
 
 logger = logging.getLogger(__name__)
-
-_SYSTEM_CONTEXT = (
-    "You are an expert venture capitalist and market research analyst. "
-    "Your sole job is to analyse startup ventures and generate structured market validation context. "
-    "Return ONLY strict, valid JSON. Output MUST start with { and end with }. "
-    "Do NOT wrap output in markdown, code fences, or add any explanatory text outside the JSON object."
-)
 
 _SYSTEM_SUMMARY = (
     "You are a Tier-1 Venture Capital Partner and Expert Market Analyst. "
@@ -85,233 +84,133 @@ async def fetch_page_text(url: str, max_words: int = 800) -> str:
         return ""
 
 # ----------- business logic functions -------------
-async def _handle_validate_generate_context(query_id: str) -> dict[str, Any]:
-    """
-    Step 2: Parses the venture details from ValidateQuery, invokes the LLM client instance to generate 
-    search queries, market signals, NLP anchors, and topic boundaries, and stores 
-    them in ValidateQueryContext using AsyncSessionLocal.
-    """
-    logger.info(f"[_handle_validate_generate_context] Starting context generation for ValidateQuery ID: {query_id}")
+async def _handle_validate_search(query_id: str) -> dict:
+    logger.info(f"[_handle_validate_search] Starting parallel search for Query ID: {query_id}")
 
     async with AsyncSessionLocal() as db:
-        try:
-            # 1. Fetch the query record
-            result = await db.execute(select(ValidateQuery).where(ValidateQuery.id == query_id))
-            query_record = result.scalars().first()
-            
-            if not query_record:
-                logger.error(f"[_handle_validate_generate_context] ValidateQuery with id {query_id} not found in database.")
-                raise ValueError(f"ValidateQuery with id {query_id} not found.")
+        # ==========================================
+        # 1. READ DB ONCE (Get the Research Plan)
+        # ==========================================
+        query_stmt = select(ValidateQuery).where(ValidateQuery.id == query_id)
+        query_record = (await db.execute(query_stmt)).scalars().first()
 
-            logger.debug(f"[_handle_validate_generate_context] Retrieved query record: title='{query_record.title}', industry='{query_record.industry}', stage='{query_record.stage}'")
+        context_stmt = select(ValidateQueryContext).where(ValidateQueryContext.query_id == query_id)
+        context_record = (await db.execute(context_stmt)).scalars().first()
 
-            await db.commit()
-            logger.info(f"[_handle_validate_generate_context] Query {query_id} status transitioned to VALIDATING.")
+        if not query_record or not context_record:
+            raise ValueError(f"Missing records for query {query_id} to proceed with Stage 3.")
 
-            # 2. Initialize LLM client
-            logger.debug(f"[_handle_validate_generate_context] Initializing LLM client...")
-            llm = get_client(
-                provider=settings.LLM_PROVIDER,
-                model=settings.LLM_MODEL,
-                api_key=settings.LLM_API_KEY,
-                base_url=settings.LLM_API_BASE_URL,
-                max_tokens=settings.LLM_MAX_TOKENS,
-            )
-            
-            # Extract location safely (with fallback if None)
-            loc_data = (query_record.profile or {}).get("location", {})
-            user_location = loc_data.get("city") or loc_data.get("country") or "Global"
-
-            # ==========================================================
-            # THE FIX: Enforcing Rigid Market-Hunting Query Archetypes
-            # ==========================================================
-            user_prompt = f"""Analyse the following startup venture / feature idea and generate strictly structured search queries for market validation.
-
-            Title: {query_record.title}
-            Description: {query_record.description}
-            Industry: {query_record.industry}
-            Stage: {query_record.stage}
-            Target Region / Founder Location: {user_location}
-
-            CRITICAL INSTRUCTION: Your 'market_signals' MUST NOT be conversational questions (e.g., do not write "what are the pain points of X"). 
-            They must be Google-style advanced search queries designed to find institutional reports, financial data, and pricing.
-            Always use negative keywords like "-quora -reddit -pinterest" to filter out user-generated junk.
-
-            Return ONLY this JSON — every field is required:
-            {{
-            "market_signals": [
-                "<1. Macro TAM Query: e.g., '{{Industry}} market size OR TAM CAGR 2024 -quora'>",
-                "<2. Competitor Economics Query: e.g., '{{Top Competitor}} revenue OR pricing tiers OR ARR -reddit'>",
-                "<3. Churn/Limitation Query: e.g., '{{Industry}} software limitations OR churn OR alternative -quora'>",
-                "<4. Benchmark Query: e.g., '{{Industry}} SaaS benchmarks CAC LTV retention -reddit'>"
-            ],
-            "nlp_anchors":     ["<key technical or domain-specific keyword>", "..."],
-            "topic_boundary":  {{
-                "in_scope":       ["<area directly relevant to this venture>"],
-                "adjacent":       ["<adjacent market worth watching>"],
-                "out_of_scope":   ["<area explicitly excluded>"]
-            }},
-            "schema_hints":    {{
-                "pricing_models":   ["<pricing pattern to look for>"],
-                "competitor_names": ["<known competitor if any>"],
-                "key_metrics":      ["<metric or data point to extract>"]
-            }}
-            }}"""
-
-            logger.debug(f"[_handle_validate_generate_context] Invoking LLM for query {query_id}.")
-
-            # 4. Call LLM — pass system prompt + user prompt
-            response = llm.call(_SYSTEM_CONTEXT, user_prompt)
-
-            logger.debug(f"[_handle_validate_generate_context] Received raw response from LLM (length: {len(response)} chars).")
-
-            # 5. Parse JSON — strip markdown fences if present
-            import re
-            cleaned = re.sub(r"```json\s*|```\s*", "", response).strip()
-            cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL).strip()
-
-            try:
-                parsed_data = json.loads(cleaned)
-                logger.info(f"[_handle_validate_generate_context] Successfully parsed JSON output from LLM for query {query_id}.")
-            except json.JSONDecodeError as json_err:
-                logger.error(f"[_handle_validate_generate_context] Failed to parse JSON response from LLM. Raw content was:\n{response}")
-                raise json_err
-
-            # 6. Save context into ValidateQueryContext
-            context_record = ValidateQueryContext(
-                query_id=query_record.id,
-                market_signals=parsed_data.get("market_signals", []),
-                nlp_anchors=parsed_data.get("nlp_anchors", []),
-                topic_boundary=parsed_data.get("topic_boundary", {}),
-                schema_hints=parsed_data.get("schema_hints", {}),
-                provider=settings.LLM_PROVIDER,
-                model=settings.LLM_MODEL,
-            )
-            db.add(context_record)
-
-            # Store generated search queries on the main record and advance status
-            generated_signals = parsed_data.get("market_signals", [])
-            query_record.search_queries = generated_signals
-            query_record.complete_step(ValidateQueryStatus.VALIDATED)
-
-            await db.commit()
-            await db.refresh(context_record)
-
-            logger.info(
-                f"[_handle_validate_generate_context] Successfully completed context generation "
-                f"for ValidateQuery ID: {query_id}. Generated {len(generated_signals)} search queries."
-            )
-            
-            return {
-                "statusCode": 200,
-                "message": "Context generated successfully",
-            }
-
-        except Exception as e:
-            await db.rollback()
-            logger.exception(f"[_handle_validate_generate_context] Error during context generation for ValidateQuery ID {query_id}: {str(e)}")
-            if 'query_record' in locals() and query_record:
-                try:
-                    query_record.fail_step(str(e))
-                    await db.commit()
-                except Exception:
-                    pass
-            raise
+        plan = context_record.research_plan or {}
+        country_code = plan.get("country_iso2")
         
-async def _handle_validate_search(query_id: str) -> dict[str, Any]:
-    """
-    Step 3: Fetches market_signals from ValidateQueryContext, executes Vertex AI Search,
-    persists results to ValidateMarketSource, and advances status to SCORING.
-    """
-    logger.info(f"[_handle_validate_search] Starting market search for Query ID: {query_id}")
+        # Extract sections from the plan
+        pain_inputs = plan.get("pain", {})
+        market_inputs = plan.get("market", {})
+        comp_inputs = plan.get("competition", {})
+        risk_inputs = plan.get("risk", {})
+        cost_inputs = plan.get("cost", {})
 
-    # 1. Fetch queries from context and transition status to SEARCHING
-    async with AsyncSessionLocal() as db:
-        context_result = await db.execute(
-            select(ValidateQueryContext).where(ValidateQueryContext.query_id == query_id)
-        )
-        context_record = context_result.scalars().first()
+        # ==========================================
+        # 2. MAP JSON LISTS TO THE 9 PARAMETERS
+        # ==========================================
+        
+        # 1. Pain: Combine complaints and alternative lookups
+        pain_queries = pain_inputs.get("complaint_queries", []) + pain_inputs.get("alternative_queries", [])
+        
+        # 2. Market: Combine institutional sizing and indicator terms
+        market_queries = market_inputs.get("institutional_queries", []) + market_inputs.get("indicator_search_terms", [])
+        
+        # 3. Demand: Cross-pollinate industry keywords with pain complaints
+        demand_queries = market_inputs.get("industry_keywords", []) + pain_inputs.get("complaint_queries", [])
+        
+        # 4. Competition: Discovery and competitor names
+        comp_queries = comp_inputs.get("discovery_queries", []) + pain_inputs.get("competitor_app_terms", [])
+        
+        # 5. Unit Economics: Pricing queries and bottom-up variables
+        unit_econ_queries = comp_inputs.get("pricing_queries", []) + market_inputs.get("bottom_up_variables", [])
+        
+        # 6. Cost: Licence queries and tech stack costs
+        cost_queries = cost_inputs.get("licence_queries", [])
+        
+        # 7. Regulatory: Strict legal/compliance queries
+        regulatory_queries = risk_inputs.get("regulatory_queries", [])
+        
+        # 8. Survival/Funding: Sector survival terms and grants/funding
+        survival_queries = risk_inputs.get("funding_queries", []) + risk_inputs.get("survival_sector_terms", [])
 
-        if not context_record or not context_record.market_signals:
-            return await _fail_record(query_id, "No market signals/queries found. Context generation may have failed.")
-
-        queries = context_record.market_signals
-
-    # 2. Execute Vertex AI Search
-    logger.info(f"[VALIDATE][SEARCH] Starting Vertex AI Search with {len(queries)} queries.")
-    try:
-        rich_context = {"queries": queries}
-        vertex_results = await run_vertex_search(rich_context)
-    except Exception as e:
-        return await _fail_record(query_id, f"Vertex search failed: {e}")
-
-    if not vertex_results:
-        logger.warning("[VALIDATE][SEARCH] No results returned — aborting.")
-        return await _fail_record(query_id, "No search results found.")
-
-    logger.info(f"[VALIDATE][SEARCH] Complete — {len(vertex_results)} unique results")
-
-    # 3. Persist results into ValidateMarketSource (with Deduplication)
-    try:
-        async with AsyncSessionLocal() as session:
-            # Pre-fetch existing records from the database to handle function retries safely
-            existing_records = await session.execute(
-                select(ValidateMarketSource.search_query, ValidateMarketSource.url)
-                .where(ValidateMarketSource.query_id == query_id)
-            )
+        # ==========================================
+        # 3. FIRE ALL APIs IN PARALLEL
+        # ==========================================
+        tasks = [
+            # Macro (Parameter 9 - DBnomics uses the query_id to get the ISO code internally)
+            fetch_macro_indicators(country_code),
             
-            # Initialize our tracking set with already-saved database records
-            seen_keys = {(row.search_query, row.url) for row in existing_records}
-            persisted_count = 0
+            # Community/HN (Focuses strictly on human complaints and organic demand)
+            fetch_community_discussions("pain_point_severity", pain_queries),
+            fetch_community_discussions("demand_signals", demand_queries),
+            
+            # Vertex Search (Scrapes institutional web, reports, and pricing pages)
+            fetch_vertex_search("pain_point_severity", pain_queries),
+            fetch_vertex_search("market_timing_and_size", market_queries),
+            fetch_vertex_search("demand_signals", demand_queries),
+            fetch_vertex_search("competitive_defensibility", comp_queries),
+            fetch_vertex_search("monetization_viability", unit_econ_queries),
+            fetch_vertex_search("execution_feasibility", cost_queries),      # Maps to Cost/Execution
+            fetch_vertex_search("feasibility_regulatory", regulatory_queries),
+            fetch_vertex_search("survival_funding", survival_queries)
+        ]
 
-            for r in vertex_results:
-                search_query = r.get("query", "")
-                url = r.get("url", "")
-                
-                dedup_key = (search_query, url)
+        logger.info(f"[_handle_validate_search] Dispatched {len(tasks)} parallel collection workers.")
+        
+        collected_batches = await asyncio.gather(*tasks, return_exceptions=True)
 
-                # Skip if we already saw this combination in the DB or earlier in this loop
-                if dedup_key in seen_keys:
+        # ==========================================
+        # 4. FLATTEN, DEDUPLICATE, AND WRITE TO DB ONCE
+        # ==========================================
+        db_records = []
+        seen_urls = set()
+
+        for batch in collected_batches:
+            if isinstance(batch, Exception):
+                logger.error(f"[_handle_validate_search] A sub-task failed: {batch}")
+                continue
+
+            for item in batch:
+                # Deduplicate based on the exact URL and the parameter it belongs to
+                # We use dictionary access because the fetchers now return .to_dict() JSON objects
+                dedup_key = f"{item['parameter']}:{item['source_url']}"
+                if dedup_key in seen_urls:
                     continue
                 
-                # Mark as seen
-                seen_keys.add(dedup_key)
+                seen_urls.add(dedup_key)
 
-                market_source = ValidateMarketSource(
-                    query_id=query_id,
-                    search_query=search_query,
-                    title=r.get("title", ""),
-                    url=url
+                db_records.append(
+                    ValidateQueryEvidence(
+                        query_id=query_record.id,
+                        parameter=item["parameter"],
+                        source_type=item["source_type"],
+                        source_url=item["source_url"],
+                        title=item.get("title"),
+                        raw_content=item["raw_content"],
+                        metadata_=item.get("metadata", {}),
+                        retrieved_at=item["retrieved_at"],
+                    )
                 )
-                session.add(market_source)
-                persisted_count += 1
-                
-            await session.commit()
-            logger.info(f"[VALIDATE][SEARCH] Persisted {persisted_count} new market sources to DB (filtered out duplicates)")
-            
-    except Exception as e:
-        logger.error(f"[VALIDATE][SEARCH] Failed to persist vertex results: {e}")
-        return await _fail_record(query_id, f"Database persist failed: {e}")
 
-    # 4. Mark search complete and advance status to SCORING
-    try:
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(ValidateQuery).where(ValidateQuery.id == query_id)
-            )
-            record = result.scalars().first()
-            if record:
-                record.complete_step(ValidateQueryStatus.SEARCH_COMPLETED)
-                await db.commit()
-                logger.info(f"[VALIDATE][SEARCH] Marked search complete | query_id={query_id} is now ready for SCORING")
-    except Exception as e:
-        logger.error(f"[VALIDATE][SEARCH] Failed to update query status to SCORING: {e}")
-        return await _fail_record(query_id, f"Failed to mark query complete: {e}")
+        if db_records:
+            db.add_all(db_records)
 
-    return {
-        "statusCode": 200,
-        "message": "Search executed successfully",
-    }
+        query_record.status = ValidateQueryStatus.SEARCH_COMPLETED
+        await db.commit()
+
+        logger.info(f"[_handle_validate_search] Saved {len(db_records)} evidence rows for {query_id}.")
+
+        return {
+            "statusCode": 200,
+            "query_id": query_id,
+            "evidence_count": len(db_records),
+            "parameters_covered": list({r.parameter for r in db_records}),
+        }
 
 # =====================================================================
 # PHASE 4: MAP-REDUCE SUMMARIZATION

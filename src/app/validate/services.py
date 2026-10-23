@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 from fastapi import HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.app.validate.model import ValidateQuery, ValidateQueryStatus, ValidateScoreSummary, ValidateMarketSource
+from src.app.validate.model import ValidateQuery, ValidateQueryStatus, ValidateScoreSummary, ValidateQueryResult
 from src.app.onboarding.model import Onboarding
 from src.app.user.model import User
 from src.app.validate.schema import ValidateQueryInput
@@ -125,13 +125,61 @@ async def trigger_search(query_id: UUID, db: AsyncSession, current_user: User) -
     logger.info("Search triggered", extra={"query_id": str(query_id), "job_id": job_id})
     return {"id": str(record.id), "status": "SEARCHING", "runpod_job_id": job_id}
 
-async def generate_summary(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
+async def trigger_filter(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
     record = await _get_query_or_404(query_id, current_user.id, db)
 
     if record.status != ValidateQueryStatus.SEARCH_COMPLETED:
         raise HTTPException(
             status_code=400,
-            detail=f"Search must be completed before generating summary, current: {record.status}",
+            detail=f"Search must be generated before filtering, current: {record.status}",
+        )
+
+    job_id = await runpod_trigger(str(query_id), service="validate", mode="filter")
+    record.runpod_job_id = job_id
+    # record.start_step(ValidateQueryStatus.SEARCHING)
+    await db.commit()
+    logger.info("Filter triggered", extra={"query_id": str(query_id), "job_id": job_id})
+    return {"id": str(record.id), "status": "FILTERING", "runpod_job_id": job_id}
+
+async def trigger_extract(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
+    record = await _get_query_or_404(query_id, current_user.id, db)
+
+    if record.status != ValidateQueryStatus.FILTERED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Filtering must be completed before extraction, current: {record.status}",
+        )
+
+    job_id = await runpod_trigger(str(query_id), service="validate", mode="extract")
+    record.runpod_job_id = job_id
+    # record.start_step(ValidateQueryStatus.SEARCHING)
+    await db.commit()
+    logger.info("Filter triggered", extra={"query_id": str(query_id), "job_id": job_id})
+    return {"id": str(record.id), "status": "EXTRACTING", "runpod_job_id": job_id}
+
+async def trigger_score(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
+    record = await _get_query_or_404(query_id, current_user.id, db)
+
+    if record.status != ValidateQueryStatus.EXTRACTED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Extraction must be completed before scoring, current: {record.status}",
+        )
+
+    job_id = await runpod_trigger(str(query_id), service="validate", mode="score")
+    record.runpod_job_id = job_id
+    # record.start_step(ValidateQueryStatus.SEARCHING)
+    await db.commit()
+    logger.info("Score triggered", extra={"query_id": str(query_id), "job_id": job_id})
+    return {"id": str(record.id), "status": "SCORING", "runpod_job_id": job_id}
+
+async def generate_summary(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
+    record = await _get_query_or_404(query_id, current_user.id, db)
+
+    if record.status != ValidateQueryStatus.SCORED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Scoring must be completed before generating summary, current: {record.status}",
         )
 
     job_id = await runpod_trigger(str(query_id), service="validate", mode="summary")
@@ -139,7 +187,7 @@ async def generate_summary(query_id: UUID, db: AsyncSession, current_user: User)
     # record.start_step(ValidateQueryStatus.SCORING)
     await db.commit()
     logger.info("Summary generation triggered", extra={"query_id": str(query_id), "job_id": job_id})
-    return {"id": str(record.id), "status": "SCORING", "runpod_job_id": job_id}
+    return {"id": str(record.id), "status": "SUMMARIZING", "runpod_job_id": job_id}
 
 async def get_summary(query_id: UUID, db: AsyncSession, current_user: User) -> dict:
     # 1. Validate ownership and ensure the pipeline is completely finished
@@ -153,51 +201,20 @@ async def get_summary(query_id: UUID, db: AsyncSession, current_user: User) -> d
 
     # 2. Fetch the actual summary data from the ValidateScoreSummary table
     result = await db.execute(
-        select(ValidateScoreSummary).where(ValidateScoreSummary.query_id == query_id)
+        select(ValidateQueryResult).where(ValidateQueryResult.query_id == query_id)
     )
     summary_record = result.scalars().first()
 
-    if not summary_record:
+    # Access the report JSONB column
+    report_data = summary_record.report if summary_record else None
+    
+    if not report_data:
         raise HTTPException(
             status_code=404,
-            detail="Score summary not found for this query even though status is COMPLETED. The pipeline may have failed during the final database save."
+            detail="Summary not found for this query even though status is COMPLETED. The pipeline may have failed during the final database save."
         )
     
-    # 3. Dynamically fetch the approved sources directly from the database
-    # sources_result = await db.execute(
-    #     select(ValidateMarketSource)
-    #     .where(ValidateMarketSource.query_id == query_id)
-    #     .where(ValidateMarketSource.user_approved.is_(True))
-    # )
-    # sources = sources_result.scalars().all()
-
-    # # Format the sources exactly as the UI expects them
-    # all_sources_data = [
-    #     {"title": src.title, "url": src.url, "snippet": src.snippet} 
-    #     for src in sources
-    # ]
-
-    # 4. Return the fully structured UI deliverables
-    return {
-        "id": str(summary_record.id),
-        "query_id": str(summary_record.query_id),
-        # Base Venture Details (From ValidateQuery)
-        "title": record.title,
-        "description": record.description,
-        "industry": record.industry,
-        "stage": record.stage,
-        "executive_verdict": summary_record.executive_verdict,
-        "aggregate_score": summary_record.aggregate_score,
-        "dimensional_scores": summary_record.dimensional_scores or {},
-        "competitive_landscape": summary_record.competitive_landscape or [],
-        "critical_vulnerabilities": summary_record.critical_vulnerabilities or [],
-        "actionable_next_steps": summary_record.actionable_next_steps or [],
-        "evidentiary_sources": summary_record.evidentiary_sources or [],
-        # "all_sources": all_sources_data,
-        "meta": summary_record.meta or {},
-        "created_at": summary_record.created_at.isoformat() if summary_record.created_at else None,
-        "updated_at": summary_record.updated_at.isoformat() if summary_record.updated_at else None,
-    }
+    return report_data
 
 async def get_queries(
     user_id: str, 
