@@ -18,9 +18,18 @@ from src.app.admin.model import Admin
 
 router = APIRouter(tags=["User Auth"])
 
+# get the credits count
+@router.get("/users/credits", status_code=200)
+async def fetch_credits(
+    current_user: User = Depends(require_user),
+):
+    """
+    Fetch the authenticated user's current credit balance and tier.
+    """
+    return user_services.get_user_credits(current_user)
+
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
-
 @router.post("/auth/check-provider")
 async def check_provider_route(
     body: CheckProviderRequest,

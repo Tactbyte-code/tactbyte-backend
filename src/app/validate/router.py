@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from src.core.database import session
@@ -17,6 +17,39 @@ async def raise_validate_query(
     current_user: User = Depends(require_user),
 ):
     return await services.raise_validate_query(body, db, current_user)
+
+
+
+# @router.post("/deduct", status_code=200)
+# async def deduct_report_credits(
+#     body: DeductCreditsInput,
+#     db: AsyncSession = Depends(session),
+#     current_user: User = Depends(require_user),
+# ):
+#     per_section_credits = 22
+#     cost = body.sections_unlocked * per_section_credits
+#     balance = current_user.credits or 0
+
+#     if balance < cost:
+#         raise HTTPException(
+#             status_code=400,
+#             detail=f"Insufficient balance. Need {cost} credits, but you have {balance}.",
+#         )
+
+#     current_user.credits = balance - cost
+#     db.add(current_user)
+#     await db.commit()
+#     await db.refresh(current_user)
+
+#     return {
+#         "success": True,
+#         "deducted": cost,
+#         "remaining_credits": current_user.credits,
+#         "sections_unlocked": body.sections_unlocked,
+#     }
+
+
+
 
 # ------- get status -------
 @router.get("/query/{query_id}/status")
@@ -105,3 +138,4 @@ async def get_queries(
         page=page, 
         page_size=page_size
     )
+

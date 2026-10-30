@@ -6,7 +6,6 @@ from src.app.onboarding.model import Onboarding
 from src.app.onboarding.schema import OnboardingCreate
 from src.app.user.model import User
 
-
 async def submit_onboarding(
     body: OnboardingCreate,
     db: AsyncSession,
@@ -28,10 +27,10 @@ async def submit_onboarding(
     )
     db.add(onboarding)
     current_user.is_onboarded = True
+    current_user.credits = (current_user.credits or 0) + 80 # 80cr offered after onboarding
     await db.commit()
     await db.refresh(onboarding)
     return onboarding
-
 
 async def get_my_onboarding(
     db: AsyncSession,

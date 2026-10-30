@@ -2,7 +2,6 @@ from sqlalchemy import select, func
 from src.core.database import AsyncSessionLocal
 from src.app.user.model import User
 
-
 async def get_all_users() -> list[User]:
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User))
@@ -41,3 +40,9 @@ async def toggle_user_active(user_id: int) -> User | None:
         await db.commit()
         await db.refresh(user)
         return user
+    
+def get_user_credits(current_user: User):
+    return {
+        "credits": current_user.credits or 0,
+        "credit_type": current_user.credit_type or "free"
+    }

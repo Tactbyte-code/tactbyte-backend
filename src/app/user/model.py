@@ -13,6 +13,10 @@ class User(Base):
     hashed_password = Column(String, nullable=True)
     is_onboarded = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    
+    # ➕ New fields for credits
+    credits = Column(Integer, default=0, nullable=False)
+    credit_type = Column(String, nullable=True) # e.g., "Pro", "Free", "Enterprise"
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
