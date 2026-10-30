@@ -1,17 +1,21 @@
 import logging
 import math
+import copy
 from uuid import UUID
 from typing import List, Dict, Any
 from fastapi import HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.app.validate.model import ValidateQuery, ValidateQueryStatus, ValidateScoreSummary, ValidateQueryResult
+from src.app.validate.model import ValidateQuery, ValidateQueryStatus, ValidateQueryResult
 from src.app.onboarding.model import Onboarding
 from src.app.user.model import User
 from src.app.validate.schema import ValidateQueryInput
 from src.infra.runpod.client import trigger as runpod_trigger
 
 logger = logging.getLogger(__name__)
+
+SECTION_CREDITS = 22
+PRIORITY_KEYS = ["pain", "demand", "unit_economics"]
 
 # ------------ helper functions -------------
 async def _get_query_or_404(query_id: UUID, user_id: int, db: AsyncSession) -> ValidateQuery:
@@ -199,22 +203,63 @@ async def get_summary(query_id: UUID, db: AsyncSession, current_user: User) -> d
             detail=f"Summary generation must be completed before fetching, current: {record.status}",
         )
 
-    # 2. Fetch the actual summary data from the ValidateScoreSummary table
+    # 2. Load the stored report. The row is locked so two simultaneous
+    #    first fetches cannot both charge or both unlock.
     result = await db.execute(
-        select(ValidateQueryResult).where(ValidateQueryResult.query_id == query_id)
+        select(ValidateQueryResult)
+        .where(ValidateQueryResult.query_id == query_id)
+        .with_for_update()
     )
     summary_record = result.scalars().first()
+    stored = summary_record.report if summary_record else None
 
-    # Access the report JSONB column
-    report_data = summary_record.report if summary_record else None
-    
-    if not report_data:
+    if not stored:
         raise HTTPException(
             status_code=404,
-            detail="Summary not found for this query even though status is COMPLETED. The pipeline may have failed during the final database save."
+            detail="Summary not found for this query even though status is COMPLETED. "
+                   "The pipeline may have failed during the final database save.",
         )
-    
-    return report_data
+
+    report_data = copy.deepcopy(stored)   # work on a copy; the stored report keeps the full data
+
+    # 3. First fetch only: unlock sections by credits, deduct, bump fetch
+    if report_data.get("fetch") == 1:
+        user_row = (
+            await db.execute(
+                select(User)
+                .where(User.id == current_user.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalars().one()
+
+        credits = user_row.credits or 0
+        params = report_data.get("parameters") or {}
+        all_keys = list(params.keys())
+
+        allowed_count = min(credits // SECTION_CREDITS, len(all_keys))
+        ordered = [k for k in PRIORITY_KEYS if k in params] + \
+                  [k for k in all_keys if k not in PRIORITY_KEYS]
+        unlocked = ordered[:allowed_count]
+
+        for key in unlocked:
+            params[key]["locked"] = False          # every other section stays locked: True
+
+        new_credits = credits - len(unlocked) * SECTION_CREDITS
+        user_row.credits = new_credits
+        report_data["fetch"] += 1                  # 1 -> 2, so this never charges again
+        summary_record.report = report_data        # new object, so SQLAlchemy sees the change
+
+        await db.commit()                          # report + credits in one transaction
+        current_user.credits = new_credits         # keep the request's user object in sync
+
+    # 4. Build the response: locked sections are masked in the copy only
+    response = copy.deepcopy(report_data)
+    for key, block in (response.get("parameters") or {}).items():
+        if isinstance(block, dict) and block.get("locked", False):
+            response["parameters"][key] = {"locked": True}
+
+    return response
 
 async def get_queries(
     user_id: str, 

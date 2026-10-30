@@ -389,6 +389,8 @@ def build_skeleton(inp: dict, report_id: str, now: datetime) -> dict:
     q, plan = inp["query"], inp["plan"]
     pain = plan.get("pain") or {}
     blocks = copy.deepcopy(inp["parameters"])
+    for block in blocks.values():          # every parameter starts locked
+        block["locked"] = True
     assumptions = copy.deepcopy(inp["assumptions"])
     sources, by_param = build_sources(inp["evidence"])
 
@@ -404,6 +406,7 @@ def build_skeleton(inp: dict, report_id: str, now: datetime) -> dict:
         "report_id": report_id,
         "query_id": str(q["id"]),
         "status": "COMPLETED",
+        "fetch": 1,
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "idea": {
             "title": q.get("title"), "description": q.get("description"),
