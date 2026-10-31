@@ -55,3 +55,6 @@ class ToggleUserStatusResponse(BaseModel):
     id: int
     is_active: bool
     message: str
+
+class AddCreditsRequest(BaseModel):
+    credits: int
