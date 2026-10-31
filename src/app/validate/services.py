@@ -2,7 +2,7 @@ import logging
 import math
 import copy
 from uuid import UUID
-from typing import List, Dict, Any
+from typing import Dict, Any
 from fastapi import HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -253,7 +253,7 @@ async def get_summary(query_id: UUID, db: AsyncSession, current_user: User) -> d
         await db.commit()                          # report + credits in one transaction
         current_user.credits = new_credits         # keep the request's user object in sync
 
-    # 4. Build the response: locked sections are masked in the copy only
+    # 4. Build the response: locked sections are masked in the copy only and exists in db
     response = copy.deepcopy(report_data)
     for key, block in (response.get("parameters") or {}).items():
         if isinstance(block, dict) and block.get("locked", False):
@@ -308,4 +308,56 @@ async def get_queries(
         "page": page,
         "page_size": page_size,
         "total_pages": math.ceil(total_count / page_size) if total_count > 0 else 1
+    }
+    
+async def process_section_unlock(query_id: UUID, section_name: str, db: AsyncSession, current_user: User) -> dict:
+    # 1. Fetch and lock the report to prevent race conditions
+    result = await db.execute(
+        select(ValidateQueryResult)
+        .where(ValidateQueryResult.query_id == query_id)
+        .with_for_update()
+    )
+    summary_record = result.scalars().first()
+    
+    if not summary_record or not summary_record.report:
+        raise HTTPException(status_code=404, detail="Report not found.")
+        
+    report_data = copy.deepcopy(summary_record.report)
+    params = report_data.get("parameters", {})
+    
+    # 2. Check if the requested section exists and is actually locked
+    if section_name not in params:
+        raise HTTPException(status_code=404, detail=f"Section '{section_name}' does not exist.")
+        
+    if not params[section_name].get("locked", False):
+        raise HTTPException(status_code=400, detail=f"Section '{section_name}' is already unlocked.")
+    
+    # 3. Lock the user row to safely read and deduct credits
+    user_row = (
+        await db.execute(
+            select(User).where(User.id == current_user.id).with_for_update()
+        )
+    ).scalars().one()
+
+    # 4. Check if there are enough credits
+    credits = user_row.credits or 0
+    if credits < SECTION_CREDITS:
+        raise HTTPException(status_code=400, detail="Not enough credits to unlock this section.")
+
+    # 5. Unlock the specific section in the JSON document
+    params[section_name]["locked"] = False
+
+    # 6. Deduct the exact credit cost and save to DB
+    new_credits = credits - SECTION_CREDITS
+    user_row.credits = new_credits
+    
+    # SQLAlchemy requires assigning a new dictionary object to detect JSON changes
+    summary_record.report = report_data 
+    
+    await db.commit()
+
+    return {
+        "status": "success",
+        "unlocked_section": section_name,
+        "remaining_credits": new_credits
     }

@@ -12,6 +12,9 @@ class UpdateValidateStatus(BaseModel):
     status: str
     failure_reason: Optional[str] = None
     failed_at_step: Optional[str] = None
+
+class UnlockRequest(BaseModel):
+    section_name: str
     
 # class DeductCreditsInput(BaseModel):
 #     sections_unlocked: int

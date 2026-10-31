@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from src.core.database import session
 from src.app.middleware.auth import require_user, require_admin
 from src.app.user.model import User
 from src.app.user.schema import (
     GoogleSignUp, EmailSignUp, CheckProviderRequest,
     UserResponse, ForgotPasswordRequest, VerifyOTPRequest,
-    ResetPasswordRequest, ToggleUserStatusResponse,
+    ResetPasswordRequest, ToggleUserStatusResponse, AddCreditsRequest
 )
 from src.app.user.auth import (
     check_provider, google_auth, email_signup, email_login,
@@ -28,6 +29,34 @@ async def fetch_credits(
     """
     return user_services.get_user_credits(current_user)
 
+# add credits
+@router.post("/users/add-credits")
+async def add_user_credits(
+    body: AddCreditsRequest,
+    db: AsyncSession = Depends(session),
+    current_user: User = Depends(require_user)
+):
+    if body.credits <= 0:
+        raise HTTPException(status_code=400, detail="Credits must be a positive integer.")
+
+    # Lock the user row to prevent race conditions during concurrent requests
+    user_row = (
+        await db.execute(
+            select(User).where(User.id == current_user.id).with_for_update()
+        )
+    ).scalars().one()
+
+    # Add the credits
+    new_balance = (user_row.credits or 0) + body.credits
+    user_row.credits = new_balance
+
+    await db.commit()
+
+    return {
+        "status": "success",
+        "added": body.credits,
+        "new_balance": new_balance
+    }
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
 @router.post("/auth/check-provider")
